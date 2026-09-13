@@ -3,6 +3,7 @@ import { requireUserId } from "@/lib/session";
 import { auth } from "@/auth";
 import { getDashboard } from "@/services/dashboard-service";
 import { TaskRow } from "@/components/task-row";
+import { QuickCapture } from "@/components/quick-capture";
 import type { EventModel as Event } from "@/generated/prisma/models";
 
 export const metadata = { title: "Dashboard · Nexus" };
@@ -135,6 +136,8 @@ export default async function DashboardPage() {
             ` · ${todayEvents.length} ${todayEvents.length === 1 ? "event" : "events"}`}
         </p>
       </header>
+
+      <QuickCapture />
 
       {isEmpty ? (
         <div className="rounded-xl border border-dashed border-border-strong px-6 py-12 text-center">

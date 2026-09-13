@@ -107,6 +107,43 @@ export async function* streamChat(
   }
 }
 
+/**
+ * Single-shot completion constrained by a JSON schema. Ollama enforces the shape
+ * at decode time, but the result is still untrusted: it can satisfy the schema
+ * and be nonsense, so callers must validate semantics with Zod afterwards.
+ */
+export async function completeJson(
+  messages: ChatMessage[],
+  schema: object,
+): Promise<unknown> {
+  let raw: string;
+  try {
+    const response = await ollama.chat({
+      model: config.OLLAMA_CHAT_MODEL,
+      messages,
+      format: schema,
+      stream: false,
+      options: { temperature: 0 },
+    });
+    raw = response.message.content;
+  } catch (error) {
+    throw new AppError(
+      "AI_UNAVAILABLE",
+      `Chat model "${config.OLLAMA_CHAT_MODEL}" is unreachable. Is "ollama serve" running?`,
+      error,
+    );
+  }
+
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw new AppError(
+      "AI_OUTPUT_INVALID",
+      "The model did not return valid JSON.",
+    );
+  }
+}
+
 export function assertValidEmbedding(
   embedding: number[],
 ): asserts embedding is number[] {

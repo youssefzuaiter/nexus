@@ -149,6 +149,25 @@ link written before its target existed fills itself in — without that, links
 would stay broken until each referrer was edited by hand. Deleting a note clears
 its links in both directions.
 
+**Capture parsing splits the work by competence.** Dates and times are resolved
+by `lib/natural-date.ts` in pure code, never by the model — a 3B model will
+confidently give the wrong calendar date for "next Friday". The model only
+classifies task/event/note and picks out priority, location and duration, under a
+JSON schema Ollama enforces at decode time and Zod re-checks afterwards, because
+schema conformance is not correctness.
+
+**The title is the user's own words, not the model's.** Asked explicitly to keep
+the wording, llama3.2:3b still summarises — "coffee with Ada at Starbucks" came
+back as "Coffee Meeting", losing both the person and the place. Stripping the
+matched date phrases from the original text beats it, so the model's title is
+only a fallback for when stripping leaves nothing.
+
+**`/api/ai/parse` returns a proposal and writes nothing.** The user confirms
+before anything is created, and `confirmCaptureAction` re-validates the whole
+proposal from scratch: by the time it comes back it has passed through the
+browser, so it is client input regardless of what produced it. This is the shape
+tool calling must follow when it lands.
+
 **The command palette (⌘K / Ctrl+K) searches literally, not semantically.**
 It runs on every keystroke, so an embedding round trip per keypress would be
 slow and wasteful; `quickSearch` is a debounced substring query across all four
@@ -286,7 +305,7 @@ src/
 │   │   └── ai/              # RAG Assistant chat UI (read-only, cited)
 │   └── api/ai/
 │       ├── chat/route.ts    # RAG vector search + LLM generation
-│       └── parse/route.ts   # Natural language NLP parser
+│       └── parse/route.ts   # Capture → proposal (never writes)
 ├── actions/                 # Server Actions (Zod validated)
 ├── services/                # Domain business logic / use cases
 ├── repositories/            # Data access abstraction layer

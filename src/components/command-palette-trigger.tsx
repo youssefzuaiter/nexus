@@ -25,7 +25,12 @@ export function CommandPaletteTrigger() {
       className="mb-3 flex w-full items-center justify-between rounded-lg border border-border-subtle px-3 py-1.5 text-left text-xs text-text-faint transition-colors hover:border-border-strong hover:text-text-muted"
     >
       Search
-      <kbd className="font-mono text-[11px]">{isMac ? "⌘" : "Ctrl+"}K</kbd>
+      {/* The server cannot know the platform, so this text legitimately differs
+          between the server and client renders. Marking it keeps React from
+          warning about a mismatch it is meant to correct. */}
+      <kbd suppressHydrationWarning className="font-mono text-[11px]">
+        {isMac ? "⌘" : "Ctrl+"}K
+      </kbd>
     </button>
   );
 }

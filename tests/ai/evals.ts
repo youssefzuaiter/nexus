@@ -22,6 +22,8 @@ import * as projectRepository from "@/repositories/project-repository";
 import * as dashboardService from "@/services/dashboard-service";
 import * as linkRepository from "@/repositories/link-repository";
 import { parseWikiLinks } from "@/lib/wiki-links";
+import { parseNaturalDate, stripMatches } from "@/lib/natural-date";
+import { parseCapture } from "@/services/parse-service";
 
 let passed = 0;
 let failed = 0;
@@ -804,6 +806,104 @@ async function main() {
     for (const t of projectTasks.slice(0, 3)) {
       await taskService.deleteTask(owner.id, t.id).catch(() => {});
     }
+
+    section("Natural date parsing (pure logic)");
+    // A Monday, so weekday arithmetic is easy to reason about.
+    const mon = new Date(2026, 5, 15, 10, 0, 0);
+    const pd = (text: string) => parseNaturalDate(text, mon);
+    const ymd = (d: Date | null) =>
+      d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}` : null;
+    const hm = (d: Date | null) =>
+      d ? `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}` : null;
+
+    check("today resolves to today", ymd(pd("finish this today").date) === "2026-06-15");
+    check("tomorrow resolves to the next day", ymd(pd("call mum tomorrow").date) === "2026-06-16");
+    check("a weekday resolves forward", ymd(pd("lunch on friday").date) === "2026-06-19");
+    check(
+      "the same weekday means next week, not today",
+      ymd(pd("gym on monday").date) === "2026-06-22",
+      ymd(pd("gym on monday").date) ?? "",
+    );
+    check("next friday skips a week", ymd(pd("demo next friday").date) === "2026-06-26", ymd(pd("demo next friday").date) ?? "");
+    check("in 3 days counts forward", ymd(pd("review in 3 days").date) === "2026-06-18");
+    check("in 2 weeks counts forward", ymd(pd("retro in 2 weeks").date) === "2026-06-29");
+    check("next week resolves to the coming monday", ymd(pd("plan next week").date) === "2026-06-22");
+    check("a day and month parse", ymd(pd("exam 20 june").date) === "2026-06-20");
+    check("a month and day parse", ymd(pd("exam june 20").date) === "2026-06-20");
+    check(
+      "a date already past rolls to next year",
+      ymd(pd("party 3 january").date) === "2027-01-03",
+      ymd(pd("party 3 january").date) ?? "",
+    );
+    check("an iso date parses", ymd(pd("deadline 2026-08-01").date) === "2026-08-01");
+
+    check("a pm time is applied", hm(pd("coffee friday 3pm").date) === "15:00");
+    check("a 24-hour time is applied", hm(pd("standup tomorrow 09:30").date) === "09:30");
+    check("noon is midday", hm(pd("lunch tomorrow at noon").date) === "12:00");
+    check("midnight is zero", hm(pd("deploy tomorrow midnight").date) === "00:00");
+    check("12am is midnight, not midday", hm(pd("shift tomorrow 12am").date) === "00:00");
+    check("12pm is midday", hm(pd("shift tomorrow 12pm").date) === "12:00");
+    check("tonight implies the evening", hm(pd("dinner tonight").date) === "19:00");
+    check(
+      "a bare past time today rolls to tomorrow",
+      ymd(pd("call at 9").date) === "2026-06-16",
+      `${ymd(pd("call at 9").date)} ${hm(pd("call at 9").date)}`,
+    );
+    check(
+      "a plain number is not mistaken for a time",
+      pd("buy 2 apples").date === null,
+      String(pd("buy 2 apples").date),
+    );
+    check("text with no date yields nothing", pd("remember to breathe").date === null);
+    check(
+      "matched phrases are stripped from the title",
+      stripMatches("coffee with Ada friday 3pm", pd("coffee with Ada friday 3pm").matched) === "coffee with Ada",
+      stripMatches("coffee with Ada friday 3pm", pd("coffee with Ada friday 3pm").matched),
+    );
+    check(
+      "a trailing preposition is stripped too",
+      stripMatches("submit the report by tomorrow", pd("submit the report by tomorrow").matched) === "submit the report",
+      stripMatches("submit the report by tomorrow", pd("submit the report by tomorrow").matched),
+    );
+
+    section("Capture parsing (model-assisted)");
+    const captureCases = [
+      { text: "coffee with Ada friday 3pm at Starbucks", expect: "event" },
+      { text: "submit the machine learning report by tomorrow", expect: "task" },
+      { text: "remember that the library closes early in summer", expect: "note" },
+    ];
+
+    for (const testCase of captureCases) {
+      const proposal = await parseCapture(testCase.text, mon);
+      check(
+        `"${testCase.text.slice(0, 38)}…" → ${testCase.expect}`,
+        proposal.kind === testCase.expect,
+        `got ${proposal.kind}: ${proposal.title}`,
+      );
+      check(
+        `  its title drops the date words`,
+        !/\b(friday|tomorrow|3pm)\b/i.test(proposal.title),
+        proposal.title,
+      );
+    }
+
+    const dated = await parseCapture("dentist appointment next friday 2pm", mon);
+    check(
+      "the date comes from code, not the model",
+      dated.kind === "event"
+        ? ymd(new Date(dated.startTime)) === "2026-06-26" && hm(new Date(dated.startTime)) === "14:00"
+        : dated.kind === "task" && dated.dueDate !== null &&
+          ymd(new Date(dated.dueDate)) === "2026-06-26",
+      dated.kind === "event" ? `${ymd(new Date(dated.startTime))} ${hm(new Date(dated.startTime))}` : String(dated.kind),
+    );
+    check(
+      "an event proposal always ends after it starts",
+      dated.kind !== "event" || new Date(dated.endTime) > new Date(dated.startTime),
+    );
+    check(
+      "parsing writes nothing to the database",
+      (await prisma.task.count({ where: { userId: owner.id, title: { contains: "dentist" } } })) === 0,
+    );
 
     section("Wiki-link parsing (pure logic)");
     check("extracts a single link", parseWikiLinks("see [[Thesis outline]] today").join() === "Thesis outline");
