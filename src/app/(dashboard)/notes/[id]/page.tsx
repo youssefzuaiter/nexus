@@ -5,6 +5,13 @@ import { getNote } from "@/repositories/note-repository";
 import { NoteEditor } from "@/components/note-editor";
 import { updateNoteAction, deleteNoteAction } from "@/actions/notes";
 import { listProjectOptions } from "@/repositories/project-repository";
+import {
+  getOutgoingLinks,
+  getBacklinks,
+  resolveNoteTitles,
+} from "@/repositories/link-repository";
+import { parseWikiLinks } from "@/lib/wiki-links";
+import { NoteLinks } from "@/components/note-links";
 
 
 export const metadata = { title: "Note · Nexus" };
@@ -16,7 +23,13 @@ export default async function NotePage({ params }: PageProps<"/notes/[id]">) {
   const note = await getNote(userId, id);
   if (!note) notFound();
 
-  const projects = await listProjectOptions(userId);
+  const [projects, outgoing, backlinks, titles] = await Promise.all([
+    listProjectOptions(userId),
+    getOutgoingLinks(userId, note.id),
+    getBacklinks(userId, note.id),
+    Promise.resolve(parseWikiLinks(note.content)),
+  ]);
+  const { unresolved } = await resolveNoteTitles(userId, titles);
 
   const updateThisNote = updateNoteAction.bind(null, note.id);
   const deleteThisNote = deleteNoteAction.bind(null, note.id);
@@ -45,6 +58,14 @@ export default async function NotePage({ params }: PageProps<"/notes/[id]">) {
         }}
         onDelete={deleteThisNote}
       />
+
+      <section className="mt-6 border-t border-border-subtle pt-5">
+        <NoteLinks
+          outgoing={outgoing}
+          backlinks={backlinks}
+          unresolved={unresolved}
+        />
+      </section>
     </div>
   );
 }
