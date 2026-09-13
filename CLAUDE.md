@@ -141,6 +141,11 @@ mutation, and the evals verify all three.
 **Deleting a project detaches its contents rather than cascading.** Losing a
 project must never silently take the user's notes, tasks and events with it.
 
+**The dashboard reads, never writes.** `services/dashboard-service.ts` assembles
+Today, Schedule, Recent notes and Active projects from the existing repositories
+in one parallel fetch. "Next up" is deliberately suppressed while today still has
+an unfinished event, so the panel never repeats what the schedule already shows.
+
 **Derived fields are set in one place.** Project `progress` is computed from
 linked tasks and written only by `recalculateProgress()`, which every task
 mutation calls — including moving a task between projects, which changes both. `completedAt` is written only by
@@ -255,7 +260,7 @@ src/
 │   ├── (auth)/              # Login, Register — redirects out if signed in
 │   ├── (dashboard)/         # Main protected shell — redirects to /login if not
 │   │   ├── layout.tsx       # Sidebar + Command Palette provider
-│   │   ├── page.tsx         # Dashboard home (Today, Schedule, Recent)
+│   │   ├── page.tsx         # Dashboard home (Today, Schedule, Recent, Projects)
 │   │   ├── calendar/        # Month grid + Next up, event detail
 │   │   ├── notes/           # Note list, editor, semantic search (backlinks TODO)
 │   │   ├── tasks/           # Buckets (Overdue/Today/Upcoming/Someday), detail

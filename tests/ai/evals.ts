@@ -19,6 +19,7 @@ import * as eventService from "@/services/event-service";
 import * as eventRepository from "@/repositories/event-repository";
 import * as projectService from "@/services/project-service";
 import * as projectRepository from "@/repositories/project-repository";
+import * as dashboardService from "@/services/dashboard-service";
 
 let passed = 0;
 let failed = 0;
@@ -800,6 +801,168 @@ async function main() {
     await noteService.deleteNote(owner.id, projectNote.id);
     for (const t of projectTasks.slice(0, 3)) {
       await taskService.deleteTask(owner.id, t.id).catch(() => {});
+    }
+
+    section("Dashboard assembly");
+    const dashUser = await prisma.user.create({
+      data: { email: `dash-${randomUUID()}@test.local`, passwordHash: "eval" },
+    });
+    try {
+      const noon = new Date(2026, 5, 15, 12, 0, 0);
+      const day = (d: number, h: number, m = 0) => new Date(2026, 5, d, h, m);
+
+      const empty = await dashboardService.getDashboard(dashUser.id, noon);
+      check(
+        "a fresh workspace produces an entirely empty dashboard",
+        empty.overdueTasks.length === 0 &&
+          empty.todayTasks.length === 0 &&
+          empty.todayEvents.length === 0 &&
+          empty.recentNotes.length === 0 &&
+          empty.activeProjects.length === 0 &&
+          empty.nextEvent === null,
+      );
+
+      const mk = (title: string, due: Date | null) =>
+        taskService.createTask(dashUser.id, {
+          title,
+          description: null,
+          priority: "medium",
+          dueDate: due,
+          estimatedMinutes: 30,
+          projectId: null,
+        });
+
+      await mk("Overdue thing", day(13, 23, 59));
+      await mk("Due today thing", day(15, 9));
+      await mk("Next week thing", day(22, 12));
+      await mk("Someday thing", null);
+      const doneToday = await mk("Already finished", day(15, 10));
+      await taskService.setTaskStatus(dashUser.id, doneToday.id, "done");
+
+      const withTasks = await dashboardService.getDashboard(dashUser.id, noon);
+      check("overdue tasks are separated", withTasks.overdueTasks.length === 1, `${withTasks.overdueTasks.length}`);
+      check("today tasks are separated", withTasks.todayTasks.length === 1, `${withTasks.todayTasks.length}`);
+      check(
+        "upcoming and someday tasks stay off the dashboard",
+        ![...withTasks.overdueTasks, ...withTasks.todayTasks].some((t) =>
+          /Next week|Someday/.test(t.title),
+        ),
+      );
+      check(
+        "completed tasks do not appear in today's focus",
+        ![...withTasks.overdueTasks, ...withTasks.todayTasks].some(
+          (t) => t.id === doneToday.id,
+        ),
+      );
+
+      // Events: one earlier today, one later today, one next week.
+      await eventService.createEvent(dashUser.id, {
+        title: "Morning standup",
+        description: null,
+        startTime: day(15, 9),
+        endTime: day(15, 9, 30),
+        location: null,
+        projectId: null,
+      });
+      await eventService.createEvent(dashUser.id, {
+        title: "Afternoon lab",
+        description: null,
+        startTime: day(15, 15),
+        endTime: day(15, 17),
+        location: null,
+        projectId: null,
+      });
+      await eventService.createEvent(dashUser.id, {
+        title: "Next week seminar",
+        description: null,
+        startTime: day(22, 10),
+        endTime: day(22, 11),
+        location: null,
+        projectId: null,
+      });
+
+      const withEvents = await dashboardService.getDashboard(dashUser.id, noon);
+      check("today's events are listed", withEvents.todayEvents.length === 2, `${withEvents.todayEvents.length}`);
+      check(
+        "today's events include ones already finished today",
+        withEvents.todayEvents.some((e) => e.title === "Morning standup"),
+      );
+      check(
+        "events from other days are excluded",
+        !withEvents.todayEvents.some((e) => e.title === "Next week seminar"),
+      );
+      check(
+        "next-up is suppressed while today still has events left",
+        withEvents.nextEvent === null,
+      );
+
+      // After the last event of the day ends, next-up should appear instead.
+      const lateEvening = new Date(2026, 5, 15, 22, 0);
+      const afterHours = await dashboardService.getDashboard(dashUser.id, lateEvening);
+      check(
+        "next-up appears once today's events are over",
+        afterHours.nextEvent?.title === "Next week seminar",
+        afterHours.nextEvent?.title,
+      );
+      check(
+        "today's events still show after they have ended",
+        afterHours.todayEvents.length === 2,
+      );
+
+      // Notes and projects.
+      for (const title of ["Note one", "Note two", "Note three", "Note four", "Note five"]) {
+        await noteService.createNote(dashUser.id, {
+          title,
+          content: "Some content for the dashboard listing.",
+          tags: [],
+          isFavorite: false,
+          projectId: null,
+        });
+      }
+      const finished = await projectService.createProject(dashUser.id, {
+        title: "Finished project",
+        category: "Personal",
+      });
+      const finishedTask = await taskService.createTask(dashUser.id, {
+        title: "The only task",
+        description: null,
+        priority: "low",
+        dueDate: null,
+        estimatedMinutes: 10,
+        projectId: finished.id,
+      });
+      await taskService.setTaskStatus(dashUser.id, finishedTask.id, "done");
+      await projectService.createProject(dashUser.id, {
+        title: "Ongoing project",
+        category: "University",
+      });
+
+      const full = await dashboardService.getDashboard(dashUser.id, noon);
+      check("recent notes are capped at four", full.recentNotes.length === 4, `${full.recentNotes.length}`);
+      check(
+        "recent notes are newest first",
+        full.recentNotes[0].title === "Note five",
+        full.recentNotes[0].title,
+      );
+      check(
+        "fully complete projects drop off the active list",
+        !full.activeProjects.some((p) => p.id === finished.id),
+      );
+      check(
+        "in-progress projects remain active",
+        full.activeProjects.some((p) => p.title === "Ongoing project"),
+      );
+      check("indexed chunk count is reported", full.indexedChunks > 0, `${full.indexedChunks}`);
+
+      // Isolation: the dashboard must never reach into another account.
+      const otherDash = await dashboardService.getDashboard(owner.id, noon);
+      check(
+        "another user's dashboard shows none of this data",
+        !otherDash.recentNotes.some((n) => /^Note (one|five)$/.test(n.title)) &&
+          !otherDash.todayEvents.some((e) => e.title === "Morning standup"),
+      );
+    } finally {
+      await prisma.user.delete({ where: { id: dashUser.id } });
     }
 
     section("Assistant retrieval and citations");

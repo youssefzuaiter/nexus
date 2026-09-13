@@ -36,7 +36,7 @@ function toSummary(
 
 export async function listNotes(
   userId: string,
-  options: { favoritesOnly?: boolean; tag?: string } = {},
+  options: { favoritesOnly?: boolean; tag?: string; take?: number } = {},
 ): Promise<NoteSummary[]> {
   const notes = await prisma.note.findMany({
     where: {
@@ -46,6 +46,7 @@ export async function listNotes(
       ...(options.tag ? { tags: { has: options.tag } } : {}),
     },
     orderBy: { updatedAt: "desc" },
+    ...(options.take ? { take: options.take } : {}),
     select: {
       id: true,
       title: true,
