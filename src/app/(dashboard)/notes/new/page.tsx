@@ -3,6 +3,8 @@ import { NoteEditor } from "@/components/note-editor";
 import { createNoteAction } from "@/actions/notes";
 import { requireUserId } from "@/lib/session";
 import { listProjectOptions } from "@/repositories/project-repository";
+import { isTrackingEnabled } from "@/repositories/focus-repository";
+import { FocusTracker } from "@/components/focus-tracker";
 
 
 export const metadata = { title: "New note · Nexus" };
@@ -13,7 +15,10 @@ export default async function NewNotePage({
   const userId = await requireUserId();
   const params = await searchParams;
   const presetTitle = typeof params.title === "string" ? params.title.slice(0, 200) : "";
-  const projects = await listProjectOptions(userId);
+  const [projects, trackFocus] = await Promise.all([
+    listProjectOptions(userId),
+    isTrackingEnabled(userId),
+  ]);
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -41,6 +46,8 @@ export default async function NewNotePage({
           projectId: null,
         }}
       />
+
+      {trackFocus && <FocusTracker selector='textarea[name="content"]' />}
     </div>
   );
 }

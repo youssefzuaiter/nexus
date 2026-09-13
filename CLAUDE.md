@@ -264,6 +264,25 @@ worst an injection achieves is a wrong or silly answer — it provably cannot re
 another tenant's data, because that data never enters the context window. The evals
 assert exactly that, including under a fully compromised answer.
 
+## Focus telemetry is opt-in, and that is enforced on the server
+
+The spec defines `FocusTelemetry` but never says what it is for, so the chosen
+interpretation is deliberately narrow: while writing a note, record **only** how
+long writing was active and how many characters were typed. Never the content.
+
+It is **off by default**. `recordFocusSessionAction` checks
+`focusTrackingEnabled` server-side and refuses, so a client that keeps posting
+after the toggle is switched off stores nothing. Turning it off keeps existing
+history — deleting is a separate, explicit action, because silently destroying
+the user's data on a settings change is worse than keeping it.
+
+`cognitiveLoad` is a coarse heuristic over two crude signals. It is presented as
+an observation about a session, never as a claim about the person, and nothing
+in the app reads it back or acts on it. Keep it that way.
+
+`UserProfile.focusTrackingEnabled` is the one column added beyond the spec's
+schema; the spec had nowhere to record consent.
+
 ### Tool calling: the model proposes, it never acts
 
 `lib/ai-tools.ts` holds the complete list of things the assistant may request.
@@ -327,7 +346,8 @@ src/
 │   │   ├── notes/           # List, editor, semantic search, wiki backlinks
 │   │   ├── tasks/           # Buckets (Overdue/Today/Upcoming/Someday), detail
 │   │   ├── projects/        # Hub with derived progress, linked contents
-│   │   └── ai/              # RAG Assistant chat UI (read-only, cited)
+│   │   ├── ai/              # RAG Assistant: cited answers + proposals
+│   │   └── focus/           # Opt-in writing telemetry and its controls
 │   └── api/ai/
 │       ├── chat/route.ts    # RAG vector search + LLM generation
 │       └── parse/route.ts   # Capture → proposal (never writes)
