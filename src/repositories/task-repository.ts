@@ -14,6 +14,8 @@ export type TaskInput = {
   dueDate: Date | null;
   estimatedMinutes: number;
   projectId: string | null;
+  scheduledStart: Date | null;
+  scheduledEnd: Date | null;
 };
 
 export async function listTasks(
@@ -89,6 +91,26 @@ export async function softDeleteTask(
     data: { deletedAt: new Date() },
   });
   return count > 0;
+}
+
+/**
+ * Tasks whose scheduled block overlaps the window at all, so a block spanning
+ * midnight still shows on both days.
+ */
+export async function listScheduledInRange(
+  userId: string,
+  from: Date,
+  to: Date,
+): Promise<Task[]> {
+  return prisma.task.findMany({
+    where: {
+      userId,
+      deletedAt: null,
+      scheduledStart: { lt: to },
+      scheduledEnd: { gt: from },
+    },
+    orderBy: { scheduledStart: "asc" },
+  });
 }
 
 export async function countOpenTasks(userId: string): Promise<number> {

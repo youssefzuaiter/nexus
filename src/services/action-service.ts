@@ -108,6 +108,8 @@ export async function executeProposal(
       dueDate: proposal.dueDate ? new Date(proposal.dueDate) : null,
       estimatedMinutes: proposal.estimatedMinutes,
       projectId: null,
+      scheduledStart: null,
+      scheduledEnd: null,
     });
     entityId = task.id;
   } else if (proposal.kind === "event") {

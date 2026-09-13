@@ -2,15 +2,25 @@ import "server-only";
 import { indexEntity, deleteEntityEmbeddings } from "@/lib/vector";
 import { AppError } from "@/lib/api-response";
 import * as eventRepository from "@/repositories/event-repository";
+import * as taskRepository from "@/repositories/task-repository";
 import { assertProjectOwned } from "@/services/project-service";
 import type { EventInput } from "@/repositories/event-repository";
 import type { EventModel as Event } from "@/generated/prisma/models";
+
+export type ScheduledTask = {
+  id: string;
+  title: string;
+  start: Date;
+  end: Date;
+  done: boolean;
+};
 
 export type CalendarDay = {
   date: Date;
   inCurrentMonth: boolean;
   isToday: boolean;
   events: Event[];
+  tasks: ScheduledTask[];
 };
 
 const DATE_FORMAT = new Intl.DateTimeFormat("en-GB", {
@@ -123,10 +133,23 @@ export async function buildMonthGrid(
   const gridEnd = new Date(gridStart);
   gridEnd.setDate(gridStart.getDate() + 42);
 
-  const events = await eventRepository.listEventsInRange(
-    userId,
-    gridStart,
-    gridEnd,
+  const [events, scheduled] = await Promise.all([
+    eventRepository.listEventsInRange(userId, gridStart, gridEnd),
+    taskRepository.listScheduledInRange(userId, gridStart, gridEnd),
+  ]);
+
+  // Scheduled tasks share the calendar with events but stay distinguishable:
+  // a time block is a plan to work, not an appointment.
+  const blocks: ScheduledTask[] = scheduled.flatMap((task) =>
+    task.scheduledStart && task.scheduledEnd
+      ? [{
+          id: task.id,
+          title: task.title,
+          start: task.scheduledStart,
+          end: task.scheduledEnd,
+          done: task.status === "done",
+        }]
+      : [],
   );
 
   const todayKey = dayKey(now);
@@ -145,6 +168,9 @@ export async function buildMonthGrid(
       isToday: dayKey(date) === todayKey,
       events: events.filter(
         (event) => event.startTime <= dayEnd && event.endTime >= dayStart,
+      ),
+      tasks: blocks.filter(
+        (block) => block.start <= dayEnd && block.end >= dayStart,
       ),
     };
   });

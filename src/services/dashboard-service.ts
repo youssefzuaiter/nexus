@@ -12,10 +12,19 @@ import type {
   EventModel as Event,
 } from "@/generated/prisma/models";
 
+export type TodayBlock = {
+  id: string;
+  title: string;
+  start: Date;
+  end: Date;
+  done: boolean;
+};
+
 export type Dashboard = {
   overdueTasks: Task[];
   todayTasks: Task[];
   todayEvents: Event[];
+  todayBlocks: TodayBlock[];
   nextEvent: Event | null;
   recentNotes: NoteSummary[];
   activeProjects: ProjectSummary[];
@@ -35,10 +44,11 @@ export async function getDashboard(
   const endOfToday = new Date(now);
   endOfToday.setHours(23, 59, 59, 999);
 
-  const [openTasks, todayEvents, upcoming, recentNotes, projects, indexedChunks] =
+  const [openTasks, todayEvents, scheduled, upcoming, recentNotes, projects, indexedChunks] =
     await Promise.all([
       taskRepository.listTasks(userId),
       eventRepository.listEventsInRange(userId, startOfToday, endOfToday),
+      taskRepository.listScheduledInRange(userId, startOfToday, endOfToday),
       eventRepository.listUpcomingEvents(userId, now, 1),
       noteRepository.listNotes(userId, { take: RECENT_NOTE_COUNT }),
       projectRepository.listProjects(userId),
@@ -55,10 +65,23 @@ export async function getDashboard(
   const remainingToday = todayEvents.some((event) => event.endTime >= now);
   const nextEvent = remainingToday ? null : (upcoming[0] ?? null);
 
+  const todayBlocks: TodayBlock[] = scheduled.flatMap((task) =>
+    task.scheduledStart && task.scheduledEnd
+      ? [{
+          id: task.id,
+          title: task.title,
+          start: task.scheduledStart,
+          end: task.scheduledEnd,
+          done: task.status === "done",
+        }]
+      : [],
+  );
+
   return {
     overdueTasks,
     todayTasks,
     todayEvents,
+    todayBlocks,
     nextEvent,
     recentNotes,
     activeProjects: projects

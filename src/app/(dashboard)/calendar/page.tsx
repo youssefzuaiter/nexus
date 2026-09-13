@@ -59,10 +59,10 @@ export default async function CalendarPage({
 
   const prev = month === 0 ? monthParam(year - 1, 11) : monthParam(year, month - 1);
   const next = month === 11 ? monthParam(year + 1, 0) : monthParam(year, month + 1);
-  // A multi-day event appears in several day cells, so count distinct ids.
-  const eventCount = new Set(
-    days.filter((d) => d.inCurrentMonth).flatMap((d) => d.events.map((e) => e.id)),
-  ).size;
+  // A multi-day entry appears in several day cells, so count distinct ids.
+  const inMonth = days.filter((d) => d.inCurrentMonth);
+  const eventCount = new Set(inMonth.flatMap((d) => d.events.map((e) => e.id))).size;
+  const blockCount = new Set(inMonth.flatMap((d) => d.tasks.map((t) => t.id))).size;
 
   return (
     <div className="mx-auto max-w-4xl">
@@ -73,6 +73,8 @@ export default async function CalendarPage({
           </h1>
           <p className="mt-1 text-sm text-text-muted">
             {eventCount} {eventCount === 1 ? "event" : "events"} this month
+            {blockCount > 0 &&
+              ` · ${blockCount} time ${blockCount === 1 ? "block" : "blocks"}`}
           </p>
         </div>
         <nav className="flex items-center gap-1.5">
@@ -131,6 +133,19 @@ export default async function CalendarPage({
                 </span>
 
                 <ul className="mt-1 flex flex-col gap-0.5">
+                  {day.tasks.slice(0, 2).map((task) => (
+                    <li key={task.id}>
+                      <Link
+                        href={`/tasks/${task.id}`}
+                        title={`${formatTime(task.start)} ${task.title} (time block)`}
+                        className={`block truncate rounded border border-dashed border-border-strong px-1 py-0.5 text-[11px] leading-tight transition-colors hover:border-accent hover:text-accent ${
+                          task.done ? "text-text-faint line-through" : "text-text-muted"
+                        }`}
+                      >
+                        {formatTime(task.start)} {task.title}
+                      </Link>
+                    </li>
+                  ))}
                   {day.events.slice(0, 3).map((event) => (
                     <li key={event.id}>
                       <Link
@@ -142,9 +157,9 @@ export default async function CalendarPage({
                       </Link>
                     </li>
                   ))}
-                  {day.events.length > 3 && (
+                  {day.events.length + day.tasks.length > 5 && (
                     <li className="px-1 text-[11px] text-text-faint">
-                      +{day.events.length - 3} more
+                      +{day.events.length + day.tasks.length - 5} more
                     </li>
                   )}
                 </ul>

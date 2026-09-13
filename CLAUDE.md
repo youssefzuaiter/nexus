@@ -183,6 +183,12 @@ Today, Schedule, Recent notes and Active projects from the existing repositories
 in one parallel fetch. "Next up" is deliberately suppressed while today still has
 an unfinished event, so the panel never repeats what the schedule already shows.
 
+**Time blocks are separate from due dates.** `Task.dueDate` is when something is
+owed; `scheduledStart`/`scheduledEnd` are when you plan to do it. A block given
+only a start runs for `estimatedMinutes`, an end without a start is discarded
+rather than stored, and blocks render on the calendar and dashboard as dashed
+outlines so a plan to work is never mistaken for an appointment.
+
 **Derived fields are set in one place.** Project `progress` is computed from
 linked tasks and written only by `recalculateProgress()`, which every task
 mutation calls — including moving a task between projects, which changes both. `completedAt` is written only by

@@ -108,6 +108,7 @@ export default async function DashboardPage() {
     overdueTasks,
     todayTasks,
     todayEvents,
+    todayBlocks,
     nextEvent,
     recentNotes,
     activeProjects,
@@ -119,6 +120,7 @@ export default async function DashboardPage() {
   const isEmpty =
     focusCount === 0 &&
     todayEvents.length === 0 &&
+    todayBlocks.length === 0 &&
     recentNotes.length === 0 &&
     activeProjects.length === 0;
 
@@ -171,6 +173,33 @@ export default async function DashboardPage() {
           </Panel>
 
           <Panel title="Schedule" href="/calendar" linkLabel="Calendar">
+            {todayBlocks.length > 0 && (
+              <ul className="mb-2 flex flex-col gap-2">
+                {todayBlocks.map((block) => (
+                  <li
+                    key={block.id}
+                    className="flex gap-3 rounded-xl border border-dashed border-border-strong bg-surface px-4 py-3"
+                  >
+                    <div className="shrink-0 text-xs tabular-nums text-text-muted">
+                      <div>{TIME.format(block.start)}</div>
+                      <div className="text-text-faint">{TIME.format(block.end)}</div>
+                    </div>
+                    <Link
+                      href={`/tasks/${block.id}`}
+                      className={`min-w-0 flex-1 truncate text-sm transition-colors hover:text-accent ${
+                        block.done ? "text-text-faint line-through" : "text-text"
+                      }`}
+                    >
+                      {block.title}
+                    </Link>
+                    <span className="shrink-0 self-start text-[11px] text-text-faint">
+                      Time block
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+
             {todayEvents.length === 0 ? (
               nextEvent ? (
                 <ul className="flex flex-col gap-2">
@@ -188,9 +217,9 @@ export default async function DashboardPage() {
                     </p>
                   </li>
                 </ul>
-              ) : (
+              ) : todayBlocks.length === 0 ? (
                 <Empty>Nothing scheduled today.</Empty>
-              )
+              ) : null
             ) : (
               <ul className="flex flex-col gap-2">
                 {todayEvents.map((event) => (

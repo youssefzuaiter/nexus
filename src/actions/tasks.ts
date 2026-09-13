@@ -8,6 +8,18 @@ import { type ApiResponse, ok, fail, toApiResponse } from "@/lib/api-response";
 import * as taskService from "@/services/task-service";
 import { TASK_PRIORITIES, TASK_STATUSES } from "@/lib/domain";
 
+const LOCAL_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/;
+
+// datetime-local carries no timezone and means local wall-clock time; building
+// the Date from parts keeps it local, where new Date(string) would read it as UTC.
+function fromLocalInput(value: string | null): Date | null {
+  if (!value) return null;
+  const [date, time] = value.split("T");
+  const [year, month, day] = date.split("-").map(Number);
+  const [hour, minute] = time.split(":").map(Number);
+  return new Date(year, month - 1, day, hour, minute, 0, 0);
+}
+
 const emptyToNull = (value: unknown) =>
   typeof value === "string" && value.trim() === "" ? null : value;
 
@@ -36,7 +48,16 @@ const taskSchema = z.object({
     emptyToNull,
     z.uuid().nullable().default(null),
   ),
+  scheduledStart: z.preprocess(
+    emptyToNull,
+    z.string().regex(LOCAL_DATETIME, "Pick a valid start time.").nullable().default(null),
+  ),
+  scheduledEnd: z.preprocess(
+    emptyToNull,
+    z.string().regex(LOCAL_DATETIME, "Pick a valid end time.").nullable().default(null),
+  ),
 });
+
 
 function parseForm(formData: FormData) {
   const parsed = taskSchema.safeParse({
@@ -46,6 +67,8 @@ function parseForm(formData: FormData) {
     dueDate: formData.get("dueDate") ?? "",
     estimatedMinutes: formData.get("estimatedMinutes") ?? 60,
     projectId: formData.get("projectId") ?? "",
+    scheduledStart: formData.get("scheduledStart") ?? "",
+    scheduledEnd: formData.get("scheduledEnd") ?? "",
   });
 
   if (!parsed.success) return parsed;
@@ -57,6 +80,8 @@ function parseForm(formData: FormData) {
       // A bare yyyy-mm-dd parses as UTC midnight, which lands on the previous
       // day for anyone behind UTC. Pin it to local end-of-day instead.
       dueDate: parsed.data.dueDate ? endOfLocalDay(parsed.data.dueDate) : null,
+      scheduledStart: fromLocalInput(parsed.data.scheduledStart),
+      scheduledEnd: fromLocalInput(parsed.data.scheduledEnd),
     },
   };
 }
@@ -74,6 +99,7 @@ function revalidateTaskViews(taskId?: string) {
   revalidatePath("/tasks");
   if (taskId) revalidatePath(`/tasks/${taskId}`);
   revalidatePath("/projects");
+  revalidatePath("/calendar");
   revalidatePath("/");
 }
 

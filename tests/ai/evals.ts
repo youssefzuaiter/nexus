@@ -378,6 +378,8 @@ async function main() {
       dueDate: new Date(2026, 5, 20, 23, 59, 59),
       estimatedMinutes: 120,
       projectId: null,
+      scheduledStart: null,
+      scheduledEnd: null,
     });
 
     check(
@@ -428,6 +430,8 @@ async function main() {
           dueDate: null,
           estimatedMinutes: 5,
           projectId: null,
+          scheduledStart: null,
+          scheduledEnd: null,
         }),
       ),
     );
@@ -660,6 +664,8 @@ async function main() {
           dueDate: null,
           estimatedMinutes: 60,
           projectId: project.id,
+          scheduledStart: null,
+          scheduledEnd: null,
         }),
       );
     }
@@ -751,6 +757,8 @@ async function main() {
           dueDate: null,
           estimatedMinutes: 5,
           projectId: intruderProject.id,
+          scheduledStart: null,
+          scheduledEnd: null,
         }),
       ),
     );
@@ -809,6 +817,130 @@ async function main() {
     await noteService.deleteNote(owner.id, projectNote.id);
     for (const t of projectTasks.slice(0, 3)) {
       await taskService.deleteTask(owner.id, t.id).catch(() => {});
+    }
+
+    section("Time blocking");
+    const blockUser = await prisma.user.create({
+      data: { email: `block-${randomUUID()}@test.local`, passwordHash: "eval" },
+    });
+    try {
+      const base = {
+        description: null,
+        priority: "medium" as const,
+        dueDate: null,
+        projectId: null,
+      };
+
+      const unscheduled = await taskService.createTask(blockUser.id, {
+        ...base,
+        title: "Unscheduled",
+        estimatedMinutes: 60,
+        scheduledStart: null,
+        scheduledEnd: null,
+      });
+      check(
+        "a task can have no time block",
+        unscheduled.scheduledStart === null && unscheduled.scheduledEnd === null,
+      );
+
+      const derived = await taskService.createTask(blockUser.id, {
+        ...base,
+        title: "Derived end",
+        estimatedMinutes: 90,
+        scheduledStart: new Date(2026, 5, 15, 9, 0),
+        scheduledEnd: null,
+      });
+      check(
+        "a start with no end runs for the estimate",
+        derived.scheduledEnd?.getTime() ===
+          new Date(2026, 5, 15, 10, 30).getTime(),
+        derived.scheduledEnd?.toString().slice(0, 21),
+      );
+
+      const endOnly = await taskService.createTask(blockUser.id, {
+        ...base,
+        title: "End without start",
+        estimatedMinutes: 60,
+        scheduledStart: null,
+        scheduledEnd: new Date(2026, 5, 15, 10, 0),
+      });
+      check(
+        "an end without a start is discarded, not stored",
+        endOnly.scheduledEnd === null,
+        String(endOnly.scheduledEnd),
+      );
+
+      check(
+        "a block ending before it starts is rejected",
+        await expectAppError("VALIDATION_ERROR", () =>
+          taskService.createTask(blockUser.id, {
+            ...base,
+            title: "Backwards block",
+            estimatedMinutes: 60,
+            scheduledStart: new Date(2026, 5, 15, 14, 0),
+            scheduledEnd: new Date(2026, 5, 15, 13, 0),
+          }),
+        ),
+      );
+
+      const grid = await eventService.buildMonthGrid(
+        blockUser.id,
+        2026,
+        5,
+        new Date(2026, 5, 15),
+      );
+      const fifteenth = grid.find((d) => d.inCurrentMonth && d.date.getDate() === 15);
+      check(
+        "a scheduled task appears on its day in the calendar",
+        fifteenth?.tasks.some((t) => t.id === derived.id) === true,
+        `${fifteenth?.tasks.length} blocks`,
+      );
+      check(
+        "unscheduled tasks stay off the calendar",
+        grid.every((d) => d.tasks.every((t) => t.id !== unscheduled.id)),
+      );
+      check(
+        "time blocks are kept separate from events",
+        fifteenth?.events.length === 0 && (fifteenth?.tasks.length ?? 0) > 0,
+      );
+
+      const dash = await dashboardService.getDashboard(
+        blockUser.id,
+        new Date(2026, 5, 15, 12),
+      );
+      check(
+        "today's block shows on the dashboard",
+        dash.todayBlocks.some((b) => b.id === derived.id),
+        `${dash.todayBlocks.length} blocks`,
+      );
+      check(
+        "a block on another day does not",
+        (
+          await dashboardService.getDashboard(blockUser.id, new Date(2026, 5, 16, 12))
+        ).todayBlocks.length === 0,
+      );
+
+      // Clearing the schedule removes it again.
+      await taskService.updateTask(blockUser.id, derived.id, {
+        ...base,
+        title: "Derived end",
+        estimatedMinutes: 90,
+        scheduledStart: null,
+        scheduledEnd: null,
+      });
+      check(
+        "clearing the start removes the block",
+        (await eventService.buildMonthGrid(blockUser.id, 2026, 5, new Date(2026, 5, 15)))
+          .every((d) => d.tasks.length === 0),
+      );
+
+      check(
+        "another account sees no blocks",
+        (await eventService.buildMonthGrid(owner.id, 2026, 5, new Date(2026, 5, 15)))
+          .every((d) => d.tasks.every((t) => t.id !== derived.id)),
+      );
+    } finally {
+      await prisma.user.delete({ where: { id: blockUser.id } });
     }
 
     section("Focus metrics (pure logic)");
@@ -1462,6 +1594,8 @@ async function main() {
           dueDate: due,
           estimatedMinutes: 30,
           projectId: null,
+          scheduledStart: null,
+          scheduledEnd: null,
         });
 
       await mk("Overdue thing", day(13, 23, 59));
@@ -1562,6 +1696,8 @@ async function main() {
         dueDate: null,
         estimatedMinutes: 10,
         projectId: finished.id,
+        scheduledStart: null,
+        scheduledEnd: null,
       });
       await taskService.setTaskStatus(dashUser.id, finishedTask.id, "done");
       await projectService.createProject(dashUser.id, {
