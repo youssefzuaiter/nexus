@@ -264,10 +264,35 @@ worst an injection achieves is a wrong or silly answer — it provably cannot re
 another tenant's data, because that data never enters the context window. The evals
 assert exactly that, including under a fully compromised answer.
 
-**When tool calling lands (spec §6B), this becomes load-bearing.** Every mutation
-must be gated by server-side Zod validation, an ownership check, and explicit user
-confirmation — never by the model deciding it is allowed. Assume the model *will*
-be talked into requesting something malicious, and make that request harmless.
+### Tool calling: the model proposes, it never acts
+
+`lib/ai-tools.ts` holds the complete list of things the assistant may request.
+It is **create-only** — nothing can update or delete — so the worst a fully
+hijacked model achieves is proposing clutter the user then declines. Widening
+that reach is a deliberate edit to one list, not an emergent property of a prompt.
+
+`services/action-service.ts` is the single point where a proposal becomes real,
+and everything that makes it safe lives there rather than in the model's
+judgement: the userId comes from the session, the proposal is re-validated from
+scratch (it arrives via the browser, so it is client input whatever produced it),
+the same `proposalId` can only apply once, and both the proposal and the outcome
+are written to `AuditEvent` — including declines, since a request the user
+refused is exactly the one worth being able to review.
+
+**The action decision gets its own minimal prompt.** Bound to the RAG prompt,
+llama3.2:3b got it backwards: it proposed tasks for plain questions and refused
+to propose for explicit requests, because the "answer only from the excerpts"
+rules have recency and override the tool instruction. On a dedicated prompt the
+same model scored 8/8 on the same cases. A cheap regex prefilter means plain
+questions skip the decision call entirely.
+
+**Proposal dates are re-derived from the user's words**, never taken from the
+model — asked to create a task from text containing no date at all, it proposed
+an event on 1 January 2024. A request with no date stays a task with no due date.
+
+Detection is measured, not assumed, and the two directions are not equally
+serious: proposing on a plain question is intrusive and is asserted at zero;
+failing to propose is benign and only reported (currently ~2/3).
 
 ## Auth and route protection
 

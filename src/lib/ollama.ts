@@ -77,10 +77,45 @@ export type ChatMessage = {
   content: string;
 };
 
+export type ToolCall = { name: string; arguments: Record<string, unknown> };
+
+export async function callWithTools(
+  messages: ChatMessage[],
+  tools: readonly unknown[],
+): Promise<ToolCall[]> {
+  try {
+    const response = await ollama.chat({
+      model: config.OLLAMA_CHAT_MODEL,
+      messages,
+      tools: tools as Parameters<typeof ollama.chat>[0]["tools"],
+      stream: false,
+      options: { temperature: 0 },
+    });
+
+    return (response.message.tool_calls ?? [])
+      .filter((call) => call.function?.name)
+      .map((call) => ({
+        name: call.function.name,
+        arguments: (call.function.arguments ?? {}) as Record<string, unknown>,
+      }));
+  } catch (error) {
+    throw new AppError(
+      "AI_UNAVAILABLE",
+      `Chat model "${config.OLLAMA_CHAT_MODEL}" is unreachable. Is "ollama serve" running?`,
+      error,
+    );
+  }
+}
+
+export type ChatChunk =
+  | { type: "text"; text: string }
+  | { type: "tool"; call: ToolCall };
+
 export async function* streamChat(
   messages: ChatMessage[],
   signal?: AbortSignal,
-): AsyncGenerator<string> {
+  tools?: readonly unknown[],
+): AsyncGenerator<ChatChunk> {
   let stream: AbortableAsyncIterator<ChatResponse>;
   try {
     stream = await ollama.chat({
@@ -88,6 +123,9 @@ export async function* streamChat(
       messages,
       stream: true,
       options: { temperature: 0.2 },
+      ...(tools && tools.length > 0
+        ? { tools: tools as Parameters<typeof ollama.chat>[0]["tools"] }
+        : {}),
     });
   } catch (error) {
     throw new AppError(
@@ -100,7 +138,23 @@ export async function* streamChat(
   try {
     for await (const part of stream) {
       if (signal?.aborted) break;
-      if (part.message?.content) yield part.message.content;
+
+      if (part.message?.content) {
+        yield { type: "text", text: part.message.content };
+      }
+
+      // Tool calls arrive alongside the text stream rather than replacing it, so
+      // a single request covers both answering and proposing.
+      for (const call of part.message?.tool_calls ?? []) {
+        if (!call.function?.name) continue;
+        yield {
+          type: "tool",
+          call: {
+            name: call.function.name,
+            arguments: (call.function.arguments ?? {}) as Record<string, unknown>,
+          },
+        };
+      }
     }
   } finally {
     if (signal?.aborted) stream.abort();
