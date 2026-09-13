@@ -7,8 +7,12 @@ import { listProjectOptions } from "@/repositories/project-repository";
 
 export const metadata = { title: "New note · Nexus" };
 
-export default async function NewNotePage() {
+export default async function NewNotePage({
+  searchParams,
+}: PageProps<"/notes/new">) {
   const userId = await requireUserId();
+  const params = await searchParams;
+  const presetTitle = typeof params.title === "string" ? params.title.slice(0, 200) : "";
   const projects = await listProjectOptions(userId);
 
   return (
@@ -29,6 +33,13 @@ export default async function NewNotePage() {
         action={createNoteAction}
         submitLabel="Create note"
         projects={projects}
+        initial={{
+          title: presetTitle,
+          content: "",
+          tags: [],
+          isFavorite: false,
+          projectId: null,
+        }}
       />
     </div>
   );

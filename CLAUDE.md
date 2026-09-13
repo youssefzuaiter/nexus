@@ -141,6 +141,14 @@ mutation, and the evals verify all three.
 **Deleting a project detaches its contents rather than cascading.** Losing a
 project must never silently take the user's notes, tasks and events with it.
 
+**Backlinks use `[[Note title]]` and resolve by title, within one account.**
+`EntityLink` rows are written only for links that resolve; unresolved ones are
+re-derived from the content at render time and offered as "not yet written".
+Creating or renaming a note re-resolves everyone who mentions its title, so a
+link written before its target existed fills itself in — without that, links
+would stay broken until each referrer was edited by hand. Deleting a note clears
+its links in both directions.
+
 **The dashboard reads, never writes.** `services/dashboard-service.ts` assembles
 Today, Schedule, Recent notes and Active projects from the existing repositories
 in one parallel fetch. "Next up" is deliberately suppressed while today still has
@@ -262,7 +270,7 @@ src/
 │   │   ├── layout.tsx       # Sidebar + Command Palette provider
 │   │   ├── page.tsx         # Dashboard home (Today, Schedule, Recent, Projects)
 │   │   ├── calendar/        # Month grid + Next up, event detail
-│   │   ├── notes/           # Note list, editor, semantic search (backlinks TODO)
+│   │   ├── notes/           # List, editor, semantic search, wiki backlinks
 │   │   ├── tasks/           # Buckets (Overdue/Today/Upcoming/Someday), detail
 │   │   ├── projects/        # Hub with derived progress, linked contents
 │   │   └── ai/              # RAG Assistant chat UI (read-only, cited)

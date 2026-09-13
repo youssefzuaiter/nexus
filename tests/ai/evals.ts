@@ -20,6 +20,8 @@ import * as eventRepository from "@/repositories/event-repository";
 import * as projectService from "@/services/project-service";
 import * as projectRepository from "@/repositories/project-repository";
 import * as dashboardService from "@/services/dashboard-service";
+import * as linkRepository from "@/repositories/link-repository";
+import { parseWikiLinks } from "@/lib/wiki-links";
 
 let passed = 0;
 let failed = 0;
@@ -801,6 +803,146 @@ async function main() {
     await noteService.deleteNote(owner.id, projectNote.id);
     for (const t of projectTasks.slice(0, 3)) {
       await taskService.deleteTask(owner.id, t.id).catch(() => {});
+    }
+
+    section("Wiki-link parsing (pure logic)");
+    check("extracts a single link", parseWikiLinks("see [[Thesis outline]] today").join() === "Thesis outline");
+    check(
+      "extracts several links in order",
+      parseWikiLinks("[[One]] then [[Two]] and [[Three]]").join("|") === "One|Two|Three",
+    );
+    check(
+      "trims and de-duplicates case-insensitively",
+      parseWikiLinks("[[ My Note ]] and [[my note]] and [[MY NOTE]]").length === 1,
+    );
+    check("keeps the first spelling seen", parseWikiLinks("[[ My Note ]] [[my note]]")[0] === "My Note");
+    check("ignores empty brackets", parseWikiLinks("[[]] and [[   ]]").length === 0);
+    check("ignores single brackets", parseWikiLinks("[not a link] [[real]]").join() === "real");
+    check("does not span newlines", parseWikiLinks("[[broken\nlink]]").length === 0);
+    check("handles text with no links", parseWikiLinks("plain prose, nothing here").length === 0);
+
+    section("Note backlinks");
+    const linkUser = await prisma.user.create({
+      data: { email: `links-${randomUUID()}@test.local`, passwordHash: "eval" },
+    });
+    try {
+      const mkNote = (title: string, content: string) =>
+        noteService.createNote(linkUser.id, {
+          title,
+          content,
+          tags: [],
+          isFavorite: false,
+          projectId: null,
+        });
+
+      const target = await mkNote("Thesis outline", "The plan for the dissertation.");
+      const source = await mkNote(
+        "Weekly review",
+        "Progress against [[Thesis outline]] and [[Reading list]] this week.",
+      );
+
+      const outgoing = await linkRepository.getOutgoingLinks(linkUser.id, source.id);
+      check("a link to an existing note resolves", outgoing.some((n) => n.id === target.id), `${outgoing.length} outgoing`);
+      check("a link to a missing note is not stored", outgoing.length === 1);
+
+      const { unresolved } = await linkRepository.resolveNoteTitles(
+        linkUser.id,
+        parseWikiLinks(source.content),
+      );
+      check("the missing note is reported as unresolved", unresolved.join() === "Reading list");
+
+      const backlinks = await linkRepository.getBacklinks(linkUser.id, target.id);
+      check("the target shows the source as a backlink", backlinks.some((n) => n.id === source.id));
+
+      // Creating the previously-missing note should retro-resolve the link.
+      const late = await mkNote("Reading list", "Papers to get through.");
+      const afterLate = await linkRepository.getOutgoingLinks(linkUser.id, source.id);
+      check(
+        "creating a referenced note fills in the pending link",
+        afterLate.some((n) => n.id === late.id),
+        `${afterLate.length} outgoing`,
+      );
+      check(
+        "the newly created note gains the backlink",
+        (await linkRepository.getBacklinks(linkUser.id, late.id)).some((n) => n.id === source.id),
+      );
+
+      // Editing the source to drop a link must remove it, not accumulate.
+      await noteService.updateNote(linkUser.id, source.id, {
+        title: "Weekly review",
+        content: "Only [[Thesis outline]] now.",
+        tags: [],
+        isFavorite: false,
+        projectId: null,
+      });
+      const afterEdit = await linkRepository.getOutgoingLinks(linkUser.id, source.id);
+      check("removing a link deletes it", afterEdit.length === 1 && afterEdit[0].id === target.id, `${afterEdit.length}`);
+      check(
+        "the dropped target loses its backlink",
+        (await linkRepository.getBacklinks(linkUser.id, late.id)).length === 0,
+      );
+
+      // Renaming a target re-resolves its referrers under the new title.
+      await noteService.updateNote(linkUser.id, target.id, {
+        title: "Dissertation outline",
+        content: "The plan for the dissertation.",
+        tags: [],
+        isFavorite: false,
+        projectId: null,
+      });
+      check(
+        "renaming a target breaks the stale link",
+        (await linkRepository.getOutgoingLinks(linkUser.id, source.id)).length === 0,
+      );
+
+      // A note may not link to itself.
+      const selfish = await mkNote("Selfish", "I reference [[Selfish]] myself.");
+      check(
+        "a note cannot link to itself",
+        (await linkRepository.getOutgoingLinks(linkUser.id, selfish.id)).length === 0,
+      );
+
+      // Deleting a note clears links in both directions.
+      const a = await mkNote("Alpha", "points at [[Beta]]");
+      const b = await mkNote("Beta", "points at [[Alpha]]");
+      check("mutual links both resolve", (await linkRepository.getOutgoingLinks(linkUser.id, a.id)).length === 1);
+      await noteService.deleteNote(linkUser.id, b.id);
+      check(
+        "deleting a note clears links pointing out of it",
+        (await linkRepository.getOutgoingLinks(linkUser.id, b.id)).length === 0,
+      );
+      check(
+        "deleting a note clears links pointing at it",
+        (await linkRepository.getOutgoingLinks(linkUser.id, a.id)).length === 0,
+      );
+      check(
+        "no orphaned link rows remain for the deleted note",
+        (await prisma.entityLink.count({
+          where: { userId: linkUser.id, OR: [{ sourceId: b.id }, { targetId: b.id }] },
+        })) === 0,
+      );
+
+      // Links never cross tenants, even with an identical title.
+      await noteService.createNote(owner.id, {
+        title: "Dissertation outline",
+        content: "A different user's note with the same title.",
+        tags: [],
+        isFavorite: false,
+        projectId: null,
+      });
+      const crossTenant = await mkNote("Cross check", "referencing [[Dissertation outline]]");
+      const crossLinks = await linkRepository.getOutgoingLinks(linkUser.id, crossTenant.id);
+      check(
+        "a link resolves only within the owner's own notes",
+        crossLinks.length === 1 && crossLinks[0].id === target.id,
+        `${crossLinks.length} resolved`,
+      );
+      check(
+        "no link row references another tenant's note",
+        (await prisma.entityLink.count({ where: { userId: owner.id } })) === 0,
+      );
+    } finally {
+      await prisma.user.delete({ where: { id: linkUser.id } });
     }
 
     section("Dashboard assembly");

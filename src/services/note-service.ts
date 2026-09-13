@@ -9,6 +9,8 @@ import {
 import { AppError } from "@/lib/api-response";
 import * as noteRepository from "@/repositories/note-repository";
 import { assertProjectOwned } from "@/services/project-service";
+import { parseWikiLinks } from "@/lib/wiki-links";
+import * as linkRepository from "@/repositories/link-repository";
 import type { NoteInput, NoteSummary } from "@/repositories/note-repository";
 import type { NoteModel as Note } from "@/generated/prisma/models";
 
@@ -37,6 +39,43 @@ async function syncNoteIndex(userId: string, note: Note): Promise<void> {
   }
 }
 
+async function syncNoteLinks(userId: string, note: Note): Promise<void> {
+  const titles = parseWikiLinks(note.content);
+  const { resolved } = await linkRepository.resolveNoteTitles(userId, titles);
+  await linkRepository.replaceOutgoingLinks(
+    userId,
+    note.id,
+    resolved.map((target) => target.id),
+  );
+}
+
+const MAX_REFERRERS = 50;
+
+/**
+ * A `[[Thesis outline]]` written before that note exists resolves to nothing, so
+ * creating or renaming a note has to re-resolve everyone who mentions its title
+ * — otherwise those links would stay broken until each referrer was edited by
+ * hand.
+ */
+async function resyncReferrers(userId: string, title: string, skipId: string) {
+  const trimmed = title.trim();
+  if (!trimmed) return;
+
+  const referrers = await prisma.note.findMany({
+    where: {
+      userId,
+      deletedAt: null,
+      id: { not: skipId },
+      content: { contains: trimmed, mode: "insensitive" },
+    },
+    take: MAX_REFERRERS,
+  });
+
+  for (const referrer of referrers) {
+    await syncNoteLinks(userId, referrer);
+  }
+}
+
 export async function createNote(
   userId: string,
   input: NoteInput,
@@ -44,6 +83,8 @@ export async function createNote(
   await assertProjectOwned(userId, input.projectId);
   const note = await noteRepository.createNote(userId, input);
   await syncNoteIndex(userId, note);
+  await syncNoteLinks(userId, note);
+  await resyncReferrers(userId, note.title, note.id);
   return note;
 }
 
@@ -53,11 +94,21 @@ export async function updateNote(
   input: NoteInput,
 ): Promise<Note> {
   await assertProjectOwned(userId, input.projectId);
+
+  const before = await noteRepository.getNote(userId, noteId);
   const note = await noteRepository.updateNote(userId, noteId, input);
   if (!note) {
     throw new AppError("RESOURCE_NOT_FOUND", "That note no longer exists.");
   }
+
   await syncNoteIndex(userId, note);
+  await syncNoteLinks(userId, note);
+
+  // A rename changes who resolves to this note, under both the old and new title.
+  if (before && before.title !== note.title) {
+    await resyncReferrers(userId, before.title, note.id);
+    await resyncReferrers(userId, note.title, note.id);
+  }
   return note;
 }
 
@@ -69,6 +120,7 @@ export async function deleteNote(userId: string, noteId: string): Promise<void> 
   // Soft-deleted notes must leave the search index immediately, or the
   // assistant would keep citing content the user believes is gone.
   await deleteEntityEmbeddings(userId, "note", noteId);
+  await linkRepository.deleteLinksFor(userId, noteId);
 }
 
 async function keywordSearch(
