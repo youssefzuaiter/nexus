@@ -2,6 +2,8 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { SignOutButton } from "@/components/sign-out-button";
+import { CommandPalette } from "@/components/command-palette";
+import { CommandPaletteTrigger } from "@/components/command-palette-trigger";
 
 // Extended as each section of the spec's directory map is actually built;
 // unbuilt routes are deliberately absent rather than linked as dead ends.
@@ -32,6 +34,8 @@ export default async function DashboardLayout({ children }: LayoutProps<"/">) {
           </span>
         </div>
 
+        <CommandPaletteTrigger />
+
         <nav className="flex flex-col gap-0.5">
           {NAV_ITEMS.map((item) => (
             <Link
@@ -55,6 +59,8 @@ export default async function DashboardLayout({ children }: LayoutProps<"/">) {
       {/* min-w-0 lets this flex item shrink below its content width; without it
           an overflow-x-auto child cannot clip and the whole page scrolls. */}
       <main className="min-w-0 flex-1 px-6 py-8 sm:px-10">{children}</main>
+
+      <CommandPalette />
     </div>
   );
 }
