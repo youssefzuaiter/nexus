@@ -1,0 +1,220 @@
+"use client";
+
+import { useRef, useState } from "react";
+import Link from "next/link";
+import type { Citation } from "@/services/assistant-service";
+
+type Turn = {
+  role: "user" | "assistant";
+  content: string;
+  citations?: Citation[];
+  error?: string;
+};
+
+const SUGGESTIONS = [
+  "What have I been writing about lately?",
+  "Summarise my notes on this week's coursework",
+  "What did I decide about my thesis?",
+];
+
+function CitationList({ citations }: { citations: Citation[] }) {
+  if (citations.length === 0) return null;
+
+  return (
+    <ol className="mt-3 flex flex-col gap-1.5 border-t border-border-subtle pt-3">
+      {citations.map((citation) => (
+        <li key={citation.index} className="flex gap-2 text-xs">
+          <span className="shrink-0 font-mono text-text-faint">
+            [{citation.index}]
+          </span>
+          <div className="min-w-0">
+            {citation.sourceType === "note" ? (
+              <Link
+                href={`/notes/${citation.sourceId}`}
+                className="font-medium text-accent hover:underline"
+              >
+                {citation.title}
+              </Link>
+            ) : (
+              <span className="font-medium text-text">{citation.title}</span>
+            )}
+            <p className="mt-0.5 line-clamp-2 text-text-muted">
+              {citation.excerpt}
+            </p>
+          </div>
+          <span className="ml-auto shrink-0 font-mono text-text-faint">
+            {citation.similarity.toFixed(2)}
+          </span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+export function AssistantChat() {
+  const [turns, setTurns] = useState<Turn[]>([]);
+  const [question, setQuestion] = useState("");
+  const [busy, setBusy] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  async function ask(raw: string) {
+    const trimmed = raw.trim();
+    if (!trimmed || busy) return;
+
+    const history = turns
+      .filter((turn) => !turn.error)
+      .map(({ role, content }) => ({ role, content }));
+
+    setQuestion("");
+    setBusy(true);
+    setTurns((prev) => [
+      ...prev,
+      { role: "user", content: trimmed },
+      { role: "assistant", content: "" },
+    ]);
+
+    const updateLast = (patch: Partial<Turn>) =>
+      setTurns((prev) => {
+        const next = [...prev];
+        next[next.length - 1] = { ...next[next.length - 1], ...patch };
+        return next;
+      });
+
+    try {
+      const response = await fetch("/api/ai/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: trimmed, history }),
+      });
+
+      if (!response.ok || !response.body) {
+        const body = await response.json().catch(() => null);
+        updateLast({
+          error: body?.error?.message ?? "The assistant is unavailable.",
+        });
+        return;
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let answer = "";
+
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const event = JSON.parse(line);
+
+          if (event.type === "citations") {
+            updateLast({ citations: event.citations });
+          } else if (event.type === "delta") {
+            answer += event.text;
+            updateLast({ content: answer });
+          } else if (event.type === "error") {
+            updateLast({ error: event.error?.message ?? "Something failed." });
+          }
+        }
+
+        scrollRef.current?.scrollTo({
+          top: scrollRef.current.scrollHeight,
+          behavior: "smooth",
+        });
+      }
+    } catch {
+      updateLast({ error: "Lost connection to the assistant." });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="flex h-[calc(100vh-8rem)] flex-col">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto pr-1">
+        {turns.length === 0 ? (
+          <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
+            <p className="max-w-sm text-sm text-text-muted">
+              Ask about anything in your workspace. Answers are grounded in your
+              own notes and cite where they came from.
+            </p>
+            <div className="flex flex-wrap justify-center gap-2">
+              {SUGGESTIONS.map((suggestion) => (
+                <button
+                  key={suggestion}
+                  type="button"
+                  onClick={() => ask(suggestion)}
+                  className="rounded-full border border-border-subtle px-3 py-1.5 text-xs text-text-muted transition-colors hover:bg-surface-raised hover:text-text"
+                >
+                  {suggestion}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <ul className="flex flex-col gap-4">
+            {turns.map((turn, index) => (
+              <li
+                key={index}
+                className={
+                  turn.role === "user" ? "flex justify-end" : "flex justify-start"
+                }
+              >
+                <div
+                  className={
+                    turn.role === "user"
+                      ? "max-w-[85%] rounded-2xl rounded-br-sm bg-accent px-4 py-2.5 text-sm text-white"
+                      : "max-w-[95%] rounded-2xl rounded-bl-sm border border-border-subtle bg-surface px-4 py-3 text-sm text-text"
+                  }
+                >
+                  {turn.error ? (
+                    <p role="alert" className="text-danger">
+                      {turn.error}
+                    </p>
+                  ) : turn.content ? (
+                    <p className="whitespace-pre-wrap">{turn.content}</p>
+                  ) : (
+                    <p className="text-text-faint">Searching your workspace…</p>
+                  )}
+
+                  {turn.role === "assistant" && turn.citations && !turn.error && (
+                    <CitationList citations={turn.citations} />
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          ask(question);
+        }}
+        className="mt-4 flex gap-2 border-t border-border-subtle pt-4"
+      >
+        <input
+          value={question}
+          onChange={(event) => setQuestion(event.target.value)}
+          placeholder="Ask your workspace…"
+          aria-label="Ask your workspace"
+          disabled={busy}
+          className="flex-1 rounded-lg border border-border-subtle bg-surface px-3 py-2.5 text-sm text-text placeholder:text-text-faint focus:border-accent focus:outline-none disabled:opacity-60"
+        />
+        <button
+          type="submit"
+          disabled={busy || !question.trim()}
+          className="rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {busy ? "Thinking…" : "Ask"}
+        </button>
+      </form>
+    </div>
+  );
+}

@@ -1,0 +1,96 @@
+"use server";
+
+import { z } from "zod";
+import { signIn, signOut } from "@/auth";
+import { prisma } from "@/lib/prisma";
+import { hashPassword } from "@/lib/password";
+import { type ApiResponse, ok, fail, toApiResponse } from "@/lib/api-response";
+
+const registerSchema = z.object({
+  name: z.string().trim().min(1, "Name is required.").max(80),
+  email: z.email("Enter a valid email address."),
+  password: z
+    .string()
+    .min(8, "Password must be at least 8 characters.")
+    .max(200),
+});
+
+const loginSchema = z.object({
+  email: z.email("Enter a valid email address."),
+  password: z.string().min(1, "Password is required."),
+});
+
+function firstIssue(error: z.ZodError): string {
+  return error.issues[0]?.message ?? "Please check the form and try again.";
+}
+
+export async function registerAction(
+  _prevState: ApiResponse<null> | null,
+  formData: FormData,
+): Promise<ApiResponse<null>> {
+  const parsed = registerSchema.safeParse({
+    name: formData.get("name"),
+    email: formData.get("email"),
+    password: formData.get("password"),
+  });
+
+  if (!parsed.success) {
+    return fail("VALIDATION_ERROR", firstIssue(parsed.error));
+  }
+
+  const { name, password } = parsed.data;
+  const email = parsed.data.email.toLowerCase();
+
+  try {
+    const existing = await prisma.user.findUnique({
+      where: { email },
+      select: { id: true },
+    });
+    if (existing) {
+      return fail("VALIDATION_ERROR", "An account with that email already exists.");
+    }
+
+    await prisma.user.create({
+      data: {
+        email,
+        name,
+        passwordHash: await hashPassword(password),
+        profile: { create: {} },
+      },
+    });
+
+    await signIn("credentials", { email, password, redirect: false });
+    return ok(null);
+  } catch (error) {
+    return toApiResponse(error);
+  }
+}
+
+export async function loginAction(
+  _prevState: ApiResponse<null> | null,
+  formData: FormData,
+): Promise<ApiResponse<null>> {
+  const parsed = loginSchema.safeParse({
+    email: formData.get("email"),
+    password: formData.get("password"),
+  });
+
+  if (!parsed.success) {
+    return fail("VALIDATION_ERROR", firstIssue(parsed.error));
+  }
+
+  const { password } = parsed.data;
+  const email = parsed.data.email.toLowerCase();
+
+  try {
+    await signIn("credentials", { email, password, redirect: false });
+    return ok(null);
+  } catch {
+    // Never distinguish "no such account" from "wrong password" here.
+    return fail("AUTH_REQUIRED", "Incorrect email or password.");
+  }
+}
+
+export async function signOutAction(): Promise<void> {
+  await signOut({ redirectTo: "/login" });
+}

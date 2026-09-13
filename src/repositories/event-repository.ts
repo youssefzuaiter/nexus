@@ -1,0 +1,76 @@
+import "server-only";
+import { prisma } from "@/lib/prisma";
+import type { EventModel as Event } from "@/generated/prisma/models";
+
+export type EventInput = {
+  title: string;
+  description: string | null;
+  startTime: Date;
+  endTime: Date;
+  location: string | null;
+  projectId: string | null;
+};
+
+export async function listEventsInRange(
+  userId: string,
+  from: Date,
+  to: Date,
+): Promise<Event[]> {
+  return prisma.event.findMany({
+    // An event counts as inside the window if it overlaps it at all, not only if
+    // it starts inside — otherwise a multi-day event vanishes from every month
+    // after the one it began in.
+    where: { userId, startTime: { lt: to }, endTime: { gt: from } },
+    orderBy: { startTime: "asc" },
+  });
+}
+
+export async function listUpcomingEvents(
+  userId: string,
+  from: Date,
+  take: number,
+): Promise<Event[]> {
+  return prisma.event.findMany({
+    where: { userId, endTime: { gte: from } },
+    orderBy: { startTime: "asc" },
+    take,
+  });
+}
+
+export async function getEvent(
+  userId: string,
+  eventId: string,
+): Promise<Event | null> {
+  return prisma.event.findFirst({ where: { id: eventId, userId } });
+}
+
+export async function createEvent(
+  userId: string,
+  input: EventInput,
+): Promise<Event> {
+  return prisma.event.create({ data: { ...input, userId } });
+}
+
+export async function updateEvent(
+  userId: string,
+  eventId: string,
+  input: EventInput,
+): Promise<Event | null> {
+  const { count } = await prisma.event.updateMany({
+    where: { id: eventId, userId },
+    data: input,
+  });
+  if (count === 0) return null;
+  return getEvent(userId, eventId);
+}
+
+// Event has no deletedAt in the schema, so this is a hard delete.
+export async function deleteEvent(
+  userId: string,
+  eventId: string,
+): Promise<boolean> {
+  const { count } = await prisma.event.deleteMany({
+    where: { id: eventId, userId },
+  });
+  return count > 0;
+}

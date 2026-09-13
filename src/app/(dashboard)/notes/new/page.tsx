@@ -1,0 +1,35 @@
+import Link from "next/link";
+import { NoteEditor } from "@/components/note-editor";
+import { createNoteAction } from "@/actions/notes";
+import { requireUserId } from "@/lib/session";
+import { listProjectOptions } from "@/repositories/project-repository";
+
+
+export const metadata = { title: "New note · Nexus" };
+
+export default async function NewNotePage() {
+  const userId = await requireUserId();
+  const projects = await listProjectOptions(userId);
+
+  return (
+    <div className="mx-auto max-w-3xl">
+      <header className="mb-5">
+        <Link
+          href="/notes"
+          className="text-sm text-text-muted transition-colors hover:text-text"
+        >
+          ← Notes
+        </Link>
+        <h1 className="mt-2 text-2xl font-semibold tracking-tight text-text">
+          New note
+        </h1>
+      </header>
+
+      <NoteEditor
+        action={createNoteAction}
+        submitLabel="Create note"
+        projects={projects}
+      />
+    </div>
+  );
+}
