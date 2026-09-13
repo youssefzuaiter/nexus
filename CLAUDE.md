@@ -149,6 +149,16 @@ link written before its target existed fills itself in — without that, links
 would stay broken until each referrer was edited by hand. Deleting a note clears
 its links in both directions.
 
+**The command palette (⌘K / Ctrl+K) searches literally, not semantically.**
+It runs on every keystroke, so an embedding round trip per keypress would be
+slow and wasteful; `quickSearch` is a debounced substring query across all four
+entity types. Semantic search stays on the notes page and in the assistant.
+
+**React 19 rejects synchronous `setState` inside an effect body.** Resetting
+selection or clearing stale results belongs in the input's change handler, and
+state that merely derives from other state (the clamped active index) should be
+computed during render. `pnpm lint` catches this; `tsc` does not.
+
 **The dashboard reads, never writes.** `services/dashboard-service.ts` assembles
 Today, Schedule, Recent notes and Active projects from the existing repositories
 in one parallel fetch. "Next up" is deliberately suppressed while today still has
@@ -267,7 +277,7 @@ src/
 ├── app/
 │   ├── (auth)/              # Login, Register — redirects out if signed in
 │   ├── (dashboard)/         # Main protected shell — redirects to /login if not
-│   │   ├── layout.tsx       # Sidebar + Command Palette provider
+│   │   ├── layout.tsx       # Sidebar + Command Palette (⌘K)
 │   │   ├── page.tsx         # Dashboard home (Today, Schedule, Recent, Projects)
 │   │   ├── calendar/        # Month grid + Next up, event detail
 │   │   ├── notes/           # List, editor, semantic search, wiki backlinks
