@@ -14,6 +14,7 @@ const NAV_ITEMS = [
   { href: "/calendar", label: "Calendar" },
   { href: "/projects", label: "Projects" },
   { href: "/ai", label: "Assistant" },
+  { href: "/focus", label: "Focus" },
 ];
 
 export default async function DashboardLayout({ children }: LayoutProps<"/">) {

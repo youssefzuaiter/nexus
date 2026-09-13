@@ -5,6 +5,8 @@ import { getNote } from "@/repositories/note-repository";
 import { NoteEditor } from "@/components/note-editor";
 import { updateNoteAction, deleteNoteAction } from "@/actions/notes";
 import { listProjectOptions } from "@/repositories/project-repository";
+import { isTrackingEnabled } from "@/repositories/focus-repository";
+import { FocusTracker } from "@/components/focus-tracker";
 import {
   getOutgoingLinks,
   getBacklinks,
@@ -23,11 +25,12 @@ export default async function NotePage({ params }: PageProps<"/notes/[id]">) {
   const note = await getNote(userId, id);
   if (!note) notFound();
 
-  const [projects, outgoing, backlinks, titles] = await Promise.all([
+  const [projects, outgoing, backlinks, titles, trackFocus] = await Promise.all([
     listProjectOptions(userId),
     getOutgoingLinks(userId, note.id),
     getBacklinks(userId, note.id),
     Promise.resolve(parseWikiLinks(note.content)),
+    isTrackingEnabled(userId),
   ]);
   const { unresolved } = await resolveNoteTitles(userId, titles);
 
@@ -58,6 +61,8 @@ export default async function NotePage({ params }: PageProps<"/notes/[id]">) {
         }}
         onDelete={deleteThisNote}
       />
+
+      {trackFocus && <FocusTracker selector='textarea[name="content"]' />}
 
       <section className="mt-6 border-t border-border-subtle pt-5">
         <NoteLinks

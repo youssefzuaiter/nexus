@@ -26,6 +26,8 @@ import { parseNaturalDate, stripMatches } from "@/lib/natural-date";
 import { parseCapture } from "@/services/parse-service";
 import { toProposal } from "@/lib/ai-tools";
 import * as actionService from "@/services/action-service";
+import * as focusRepository from "@/repositories/focus-repository";
+import { wordsPerMinute, classifyLoad, summarise } from "@/lib/focus";
 
 let passed = 0;
 let failed = 0;
@@ -807,6 +809,105 @@ async function main() {
     await noteService.deleteNote(owner.id, projectNote.id);
     for (const t of projectTasks.slice(0, 3)) {
       await taskService.deleteTask(owner.id, t.id).catch(() => {});
+    }
+
+    section("Focus metrics (pure logic)");
+    check("wpm uses the five-character word", wordsPerMinute(500, 60) === 100, String(wordsPerMinute(500, 60)));
+    check("wpm of nothing is zero", wordsPerMinute(0, 60) === 0);
+    check("wpm over no time is zero, not infinite", wordsPerMinute(500, 0) === 0);
+    check("a long fast session reads as deep", classifyLoad(25 * 60, 40) === "deep");
+    check("a long slow session is not deep", classifyLoad(25 * 60, 10) !== "deep", classifyLoad(25 * 60, 10));
+    check("a short fast burst is steady, not deep", classifyLoad(60, 60) === "steady");
+    check("a short slow session is light", classifyLoad(60, 10) === "light");
+    check(
+      "the summary of nothing is all zeroes",
+      await (async () => {
+        const s = summarise([]);
+        return s.sessions === 0 && s.totalMinutes === 0 && s.averageWpm === 0;
+      })(),
+    );
+    check(
+      "average wpm is weighted by session length",
+      await (async () => {
+        // A one-minute burst at 100 wpm and an hour at 20 should sit near 20,
+        // not at the unweighted average of 60.
+        const s = summarise([
+          { sessionDuration: 60, typingSpeedWpm: 100, cognitiveLoad: "steady" },
+          { sessionDuration: 3600, typingSpeedWpm: 20, cognitiveLoad: "deep" },
+        ]);
+        return s.averageWpm <= 25;
+      })(),
+      String(summarise([
+        { sessionDuration: 60, typingSpeedWpm: 100, cognitiveLoad: "steady" },
+        { sessionDuration: 3600, typingSpeedWpm: 20, cognitiveLoad: "deep" },
+      ]).averageWpm),
+    );
+    check(
+      "the summary counts each load band",
+      await (async () => {
+        const s = summarise([
+          { sessionDuration: 60, typingSpeedWpm: 10, cognitiveLoad: "light" },
+          { sessionDuration: 60, typingSpeedWpm: 10, cognitiveLoad: "light" },
+          { sessionDuration: 60, typingSpeedWpm: 10, cognitiveLoad: "deep" },
+        ]);
+        return s.byLoad.light === 2 && s.byLoad.deep === 1 && s.byLoad.steady === 0;
+      })(),
+    );
+
+    section("Focus tracking consent");
+    const focusUser = await prisma.user.create({
+      data: { email: `focus-${randomUUID()}@test.local`, passwordHash: "eval" },
+    });
+    try {
+      check(
+        "tracking is off for a new account",
+        (await focusRepository.isTrackingEnabled(focusUser.id)) === false,
+      );
+      check(
+        "it is off even with no profile row at all",
+        (await prisma.userProfile.count({ where: { userId: focusUser.id } })) === 0,
+      );
+
+      await focusRepository.setTrackingEnabled(focusUser.id, true);
+      check(
+        "enabling creates the profile row and sticks",
+        (await focusRepository.isTrackingEnabled(focusUser.id)) === true,
+      );
+
+      await focusRepository.recordSession(focusUser.id, {
+        sessionDuration: 600,
+        typingSpeedWpm: 42,
+        cognitiveLoad: "steady",
+      });
+      check(
+        "a session is stored once enabled",
+        (await focusRepository.listSessions(focusUser.id)).length === 1,
+      );
+
+      await focusRepository.setTrackingEnabled(focusUser.id, false);
+      check(
+        "disabling sticks",
+        (await focusRepository.isTrackingEnabled(focusUser.id)) === false,
+      );
+      check(
+        "disabling keeps what was already recorded",
+        (await focusRepository.listSessions(focusUser.id)).length === 1,
+        "the user deletes history explicitly, it is not dropped silently",
+      );
+
+      const deleted = await focusRepository.deleteAllSessions(focusUser.id);
+      check("clearing history removes every session", deleted === 1);
+      check(
+        "nothing is left afterwards",
+        (await focusRepository.listSessions(focusUser.id)).length === 0,
+      );
+
+      check(
+        "another account sees none of this",
+        (await focusRepository.listSessions(owner.id)).length === 0,
+      );
+    } finally {
+      await prisma.user.delete({ where: { id: focusUser.id } });
     }
 
     section("Tool call validation (pure logic)");
