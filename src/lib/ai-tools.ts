@@ -1,0 +1,160 @@
+import { z } from "zod";
+import { TASK_PRIORITIES } from "@/lib/domain";
+
+// The complete set of things the assistant may ever ask for. Anything not named
+// here cannot be requested, so widening the agent's reach is a deliberate edit to
+// this list rather than an emergent property of a prompt.
+//
+// Deliberately create-only: nothing here can update or delete, so the worst a
+// fully hijacked model can achieve is proposing clutter the user then declines.
+export const AI_TOOLS = ["create_task", "create_event", "create_note"] as const;
+export type AiTool = (typeof AI_TOOLS)[number];
+
+const isoDate = z.iso.datetime();
+
+export const proposalSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("task"),
+    title: z.string().trim().min(1).max(200),
+    dueDate: isoDate.nullable().default(null),
+    priority: z.enum(TASK_PRIORITIES).default("medium"),
+    estimatedMinutes: z.coerce.number().int().min(1).max(60 * 24).default(60),
+  }),
+  z.object({
+    kind: z.literal("event"),
+    title: z.string().trim().min(1).max(200),
+    startTime: isoDate,
+    endTime: isoDate,
+    location: z.string().trim().max(200).nullable().default(null),
+  }),
+  z.object({
+    kind: z.literal("note"),
+    title: z.string().trim().min(1).max(200),
+    content: z.string().max(100_000).default(""),
+  }),
+]);
+
+export type ActionProposal = z.infer<typeof proposalSchema>;
+
+/** A proposal as it travels to the browser and back, carrying its own identity. */
+export const pendingProposalSchema = z.object({
+  proposalId: z.uuid(),
+  proposal: proposalSchema,
+});
+
+export type PendingProposal = z.infer<typeof pendingProposalSchema>;
+
+/** Tool definitions in the shape Ollama expects. */
+export const OLLAMA_TOOLS = [
+  {
+    type: "function",
+    function: {
+      name: "create_task",
+      description:
+        "Propose a new task for the user to confirm. Use when they ask you to add, remind or track something they must do.",
+      parameters: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "Short description of the task" },
+          dueDate: {
+            type: "string",
+            description: "ISO 8601 date-time, or omit if no due date was given",
+          },
+          priority: { type: "string", enum: ["low", "medium", "high"] },
+          estimatedMinutes: { type: "integer" },
+        },
+        required: ["title"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "create_event",
+      description:
+        "Propose a new calendar event for the user to confirm. Use when they ask you to schedule or book something at a time.",
+      parameters: {
+        type: "object",
+        properties: {
+          title: { type: "string" },
+          startTime: { type: "string", description: "ISO 8601 date-time" },
+          endTime: { type: "string", description: "ISO 8601 date-time" },
+          location: { type: "string" },
+        },
+        required: ["title", "startTime"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "create_note",
+      description:
+        "Propose a new note for the user to confirm. Use when they ask you to write down or remember a piece of information.",
+      parameters: {
+        type: "object",
+        properties: {
+          title: { type: "string" },
+          content: { type: "string" },
+        },
+        required: ["title"],
+      },
+    },
+  },
+] as const;
+
+const DEFAULT_EVENT_MINUTES = 60;
+
+/**
+ * Converts a raw tool call into a validated proposal, or null if the model asked
+ * for an unknown tool or supplied arguments that do not survive validation. The
+ * model's output is never trusted far enough to reach the database.
+ */
+export function toProposal(
+  name: string,
+  args: Record<string, unknown>,
+): ActionProposal | null {
+  if (!AI_TOOLS.includes(name as AiTool)) return null;
+
+  if (name === "create_task") {
+    const result = proposalSchema.safeParse({
+      kind: "task",
+      title: args.title,
+      dueDate: args.dueDate ?? null,
+      priority: args.priority ?? "medium",
+      estimatedMinutes: args.estimatedMinutes ?? 60,
+    });
+    return result.success ? result.data : null;
+  }
+
+  if (name === "create_event") {
+    const start =
+      typeof args.startTime === "string" ? Date.parse(args.startTime) : NaN;
+    if (Number.isNaN(start)) return null;
+
+    const parsedEnd =
+      typeof args.endTime === "string" ? Date.parse(args.endTime) : NaN;
+    // An end that is missing, unparseable, or not after the start is repaired
+    // rather than rejected: the user still sees and confirms the result.
+    const end =
+      Number.isNaN(parsedEnd) || parsedEnd <= start
+        ? start + DEFAULT_EVENT_MINUTES * 60_000
+        : parsedEnd;
+
+    const result = proposalSchema.safeParse({
+      kind: "event",
+      title: args.title,
+      startTime: new Date(start).toISOString(),
+      endTime: new Date(end).toISOString(),
+      location: args.location ?? null,
+    });
+    return result.success ? result.data : null;
+  }
+
+  const result = proposalSchema.safeParse({
+    kind: "note",
+    title: args.title,
+    content: args.content ?? "",
+  });
+  return result.success ? result.data : null;
+}

@@ -3,11 +3,14 @@
 import { useRef, useState } from "react";
 import Link from "next/link";
 import type { Citation } from "@/services/assistant-service";
+import type { ActionProposal } from "@/lib/ai-tools";
+import { ProposalCard } from "@/components/proposal-card";
 
 type Turn = {
   role: "user" | "assistant";
   content: string;
   citations?: Citation[];
+  proposals?: { proposalId: string; proposal: ActionProposal }[];
   error?: string;
 };
 
@@ -99,6 +102,7 @@ export function AssistantChat() {
       const decoder = new TextDecoder();
       let buffer = "";
       let answer = "";
+      const proposals: { proposalId: string; proposal: ActionProposal }[] = [];
 
       for (;;) {
         const { done, value } = await reader.read();
@@ -117,6 +121,12 @@ export function AssistantChat() {
           } else if (event.type === "delta") {
             answer += event.text;
             updateLast({ content: answer });
+          } else if (event.type === "proposal") {
+            proposals.push({
+              proposalId: event.proposalId,
+              proposal: event.proposal,
+            });
+            updateLast({ proposals: [...proposals] });
           } else if (event.type === "error") {
             updateLast({ error: event.error?.message ?? "Something failed." });
           }
@@ -185,6 +195,15 @@ export function AssistantChat() {
                   {turn.role === "assistant" && turn.citations && !turn.error && (
                     <CitationList citations={turn.citations} />
                   )}
+
+                  {turn.role === "assistant" &&
+                    turn.proposals?.map((item) => (
+                      <ProposalCard
+                        key={item.proposalId}
+                        proposalId={item.proposalId}
+                        proposal={item.proposal}
+                      />
+                    ))}
                 </div>
               </li>
             ))}

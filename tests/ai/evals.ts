@@ -24,6 +24,8 @@ import * as linkRepository from "@/repositories/link-repository";
 import { parseWikiLinks } from "@/lib/wiki-links";
 import { parseNaturalDate, stripMatches } from "@/lib/natural-date";
 import { parseCapture } from "@/services/parse-service";
+import { toProposal } from "@/lib/ai-tools";
+import * as actionService from "@/services/action-service";
 
 let passed = 0;
 let failed = 0;
@@ -805,6 +807,293 @@ async function main() {
     await noteService.deleteNote(owner.id, projectNote.id);
     for (const t of projectTasks.slice(0, 3)) {
       await taskService.deleteTask(owner.id, t.id).catch(() => {});
+    }
+
+    section("Tool call validation (pure logic)");
+    check(
+      "an unknown tool is refused",
+      toProposal("delete_everything", { title: "x" }) === null,
+    );
+    check(
+      "a tool name that only looks familiar is refused",
+      toProposal("create_task_admin", { title: "x" }) === null,
+    );
+    check("a task proposal validates", toProposal("create_task", { title: "Write up" })?.kind === "task");
+    check(
+      "a missing title is refused",
+      toProposal("create_task", { priority: "high" }) === null,
+    );
+    check(
+      "an empty title is refused",
+      toProposal("create_task", { title: "   " }) === null,
+    );
+    check(
+      "an invented priority is refused",
+      toProposal("create_task", { title: "x", priority: "catastrophic" }) === null,
+    );
+    check(
+      "an absurd estimate is refused",
+      toProposal("create_task", { title: "x", estimatedMinutes: 99999 }) === null,
+    );
+    check(
+      "an unparseable date is refused for events",
+      toProposal("create_event", { title: "x", startTime: "next tuesday-ish" }) === null,
+    );
+    check(
+      "a missing event end is repaired, not rejected",
+      await (async () => {
+        const p = toProposal("create_event", {
+          title: "Standup",
+          startTime: "2026-06-15T09:00:00.000Z",
+        });
+        return p?.kind === "event" && new Date(p.endTime) > new Date(p.startTime);
+      })(),
+    );
+    check(
+      "an end before the start is repaired",
+      await (async () => {
+        const p = toProposal("create_event", {
+          title: "Backwards",
+          startTime: "2026-06-15T09:00:00.000Z",
+          endTime: "2026-06-15T08:00:00.000Z",
+        });
+        return p?.kind === "event" && new Date(p.endTime) > new Date(p.startTime);
+      })(),
+    );
+    check(
+      "extra arguments the model invents are dropped",
+      await (async () => {
+        const p = toProposal("create_task", {
+          title: "Legit",
+          userId: "some-other-user",
+          isAdmin: true,
+        });
+        return p !== null && !("userId" in p) && !("isAdmin" in p);
+      })(),
+      "a model cannot smuggle a userId through the tool call",
+    );
+
+    section("Proposal execution, approval and audit");
+    const agentUser = await prisma.user.create({
+      data: { email: `agent-${randomUUID()}@test.local`, passwordHash: "eval" },
+    });
+    try {
+      const proposal = toProposal("create_task", {
+        title: "Book the exam slot",
+        priority: "high",
+      })!;
+      const proposalId = randomUUID();
+
+      await actionService.recordProposed(agentUser.id, proposalId, proposal, "assistant");
+      check(
+        "proposing writes an audit entry before any confirmation",
+        (await prisma.auditEvent.count({
+          where: { userId: agentUser.id, action: "AI_MUTATION_PROPOSED" },
+        })) === 1,
+      );
+      check(
+        "proposing creates nothing",
+        (await prisma.task.count({ where: { userId: agentUser.id } })) === 0,
+      );
+
+      const applied = await actionService.executeProposal(
+        agentUser.id,
+        proposalId,
+        proposal,
+        "assistant",
+      );
+      check("confirming creates the task", applied.replayed === false);
+      check(
+        "the task exists and belongs to the confirming user",
+        (await prisma.task.count({
+          where: { userId: agentUser.id, id: applied.entityId },
+        })) === 1,
+      );
+      check(
+        "the creation is audited as an AI action",
+        await (async () => {
+          const entry = await prisma.auditEvent.findFirst({
+            where: { userId: agentUser.id, action: "TASK_CREATED" },
+          });
+          return entry?.actorType === "AI_AGENT" && entry.entityId === applied.entityId;
+        })(),
+      );
+
+      // Idempotency: the spec requires a replayed confirmation to be harmless.
+      const replay = await actionService.executeProposal(
+        agentUser.id,
+        proposalId,
+        proposal,
+        "assistant",
+      );
+      check("a replayed confirmation is recognised", replay.replayed === true);
+      check("a replayed confirmation returns the same entity", replay.entityId === applied.entityId);
+      check(
+        "a replayed confirmation creates no second task",
+        (await prisma.task.count({ where: { userId: agentUser.id } })) === 1,
+      );
+      check(
+        "a replayed confirmation writes no second audit entry",
+        (await prisma.auditEvent.count({
+          where: { userId: agentUser.id, action: "TASK_CREATED" },
+        })) === 1,
+      );
+
+      // A different id with identical content is a genuinely new request.
+      const second = await actionService.executeProposal(
+        agentUser.id,
+        randomUUID(),
+        proposal,
+        "assistant",
+      );
+      check("a fresh proposal id creates a second task", second.entityId !== applied.entityId);
+      check(
+        "two tasks now exist",
+        (await prisma.task.count({ where: { userId: agentUser.id } })) === 2,
+      );
+
+      // Declining records the refusal and writes nothing else.
+      const declinedId = randomUUID();
+      await actionService.recordDeclined(agentUser.id, declinedId);
+      check(
+        "declining is audited",
+        (await prisma.auditEvent.count({
+          where: { userId: agentUser.id, action: "AI_MUTATION_DECLINED" },
+        })) === 1,
+      );
+      check(
+        "declining creates nothing",
+        (await prisma.task.count({ where: { userId: agentUser.id } })) === 2,
+      );
+
+      // The audit trail is per-account like everything else.
+      const otherTrail = await actionService.listAuditTrail(owner.id);
+      check(
+        "the audit trail never crosses accounts",
+        otherTrail.every((entry) => entry.entityId !== applied.entityId),
+        `${otherTrail.length} entries for the other user`,
+      );
+      const trail = await actionService.listAuditTrail(agentUser.id);
+      check("the owner sees their own trail", trail.length >= 4, `${trail.length} entries`);
+
+      // A confirmation replayed against another account must not reach across.
+      const crossApplied = await actionService.executeProposal(
+        owner.id,
+        proposalId,
+        proposal,
+        "assistant",
+      );
+      check(
+        "replaying another user's proposal id creates a separate task for them",
+        crossApplied.entityId !== applied.entityId && crossApplied.replayed === false,
+      );
+      check(
+        "and does not touch the original owner's data",
+        (await prisma.task.count({ where: { userId: agentUser.id } })) === 2,
+      );
+      await prisma.task.deleteMany({ where: { userId: owner.id } });
+      await prisma.auditEvent.deleteMany({ where: { userId: owner.id } });
+    } finally {
+      await prisma.user.delete({ where: { id: agentUser.id } });
+    }
+
+    section("Action routing (measured, asymmetric)");
+    // The two directions are not equally serious. Proposing something on a plain
+    // question is intrusive and is asserted; failing to propose is benign — the
+    // user gets an answer and can capture it by hand — so it is only reported.
+    const routingUser = await prisma.user.create({
+      data: { email: `routing-${randomUUID()}@test.local`, passwordHash: "eval" },
+    });
+    try {
+      const READ_ONLY = [
+        "what is on my reading list",
+        "what did I write about optimizers",
+        "summarise my notes from this week",
+        "when is my exam",
+      ];
+      const ACTIONS = [
+        "Add a task to book my exam slot",
+        "Schedule a dentist appointment next friday at 2pm",
+        "Remind me to email my supervisor tomorrow",
+      ];
+
+      const countProposals = async (question: string) => {
+        let proposals = 0;
+        for await (const event of assistantService.answerQuestion(
+          routingUser.id,
+          question,
+        )) {
+          if (event.type === "proposal") proposals++;
+        }
+        return proposals;
+      };
+
+      for (const question of READ_ONLY) {
+        check(
+          `"${question.slice(0, 34)}" proposes nothing`,
+          (await countProposals(question)) === 0,
+        );
+      }
+
+      let proposed = 0;
+      for (const question of ACTIONS) {
+        if ((await countProposals(question)) > 0) proposed++;
+      }
+      console.log(
+        `  NOTE  action requests proposed ${proposed}/${ACTIONS.length} — a 3B model is inconsistent here; a miss just answers instead`,
+      );
+      check(
+        "at least some action requests are recognised",
+        proposed > 0,
+        `${proposed}/${ACTIONS.length}`,
+      );
+      // The model invented 1 January 2024 for a request containing no date at
+      // all, so dates in proposals are re-derived from the user's own words.
+      const noDate = await assistantService.decideAction(
+        "Add a task to book my exam slot",
+        new Date(2026, 5, 15, 10),
+      );
+      if (noDate) {
+        check(
+          "a dateless request never becomes a dated event",
+          noDate.kind !== "event",
+          `proposed ${noDate.kind}`,
+        );
+        check(
+          "a dateless request carries no invented due date",
+          noDate.kind !== "task" || noDate.dueDate === null,
+          noDate.kind === "task" ? String(noDate.dueDate) : "",
+        );
+      }
+
+      const dated = await assistantService.decideAction(
+        "Schedule a dentist appointment next friday at 2pm",
+        new Date(2026, 5, 15, 10),
+      );
+      if (dated) {
+        const when =
+          dated.kind === "event"
+            ? new Date(dated.startTime)
+            : dated.kind === "task" && dated.dueDate
+              ? new Date(dated.dueDate)
+              : null;
+        check(
+          "a dated request uses the date from the user's words",
+          when !== null &&
+            when.getFullYear() === 2026 &&
+            when.getMonth() === 5 &&
+            when.getDate() === 26,
+          when ? when.toString().slice(0, 21) : "no date",
+        );
+      }
+
+      check(
+        "no proposal was executed while routing",
+        (await prisma.task.count({ where: { userId: routingUser.id } })) === 0 &&
+          (await prisma.event.count({ where: { userId: routingUser.id } })) === 0,
+      );
+    } finally {
+      await prisma.user.delete({ where: { id: routingUser.id } });
     }
 
     section("Natural date parsing (pure logic)");
