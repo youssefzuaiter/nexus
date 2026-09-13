@@ -1,0 +1,180 @@
+datasource db {
+  provider   = "postgresql"
+  extensions = [vector]
+}
+
+generator client {
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  name         String   @default("Youssef Zuaiter")
+  passwordHash String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  profile     UserProfile?
+  projects    Project[]
+  notes       Note[]
+  tasks       Task[]
+  events      Event[]
+  links       EntityLink[]
+  embeddings  WorkspaceEmbedding[]
+  telemetry   FocusTelemetry[]
+  auditLogs   AuditEvent[]
+}
+
+model UserProfile {
+  id         String @id @default(uuid())
+  userId     String @unique
+  university String @default("Bahçeşehir University")
+  program    String @default("AI Engineering")
+  studentId  String @default("2361039")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Project {
+  id        String    @id @default(uuid())
+  userId    String
+  title     String
+  category  String
+  progress  Int       @default(0)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  notes  Note[]
+  tasks  Task[]
+  events Event[]
+
+  @@index([userId])
+}
+
+model Note {
+  id         String    @id @default(uuid())
+  userId     String
+  projectId  String?
+  title      String
+  content    String    @db.Text
+  tags       String[]
+  isFavorite Boolean   @default(false)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  deletedAt  DateTime?
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  tasks   Task[]
+
+  @@index([userId])
+}
+
+model Task {
+  id               String    @id @default(uuid())
+  userId           String
+  projectId        String?
+  noteId           String?
+  title            String
+  description      String?
+  status           String    @default("todo")
+  priority         String    @default("medium")
+  dueDate          DateTime?
+  estimatedMinutes Int       @default(60)
+  scheduledStart   DateTime?
+  scheduledEnd     DateTime?
+  completedAt      DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  deletedAt        DateTime?
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  note    Note?    @relation(fields: [noteId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([dueDate])
+}
+
+model Event {
+  id          String   @id @default(uuid())
+  userId      String
+  projectId   String?
+  title       String
+  description String?
+  startTime   DateTime
+  endTime     DateTime
+  location    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([startTime])
+}
+
+model EntityLink {
+  id         String   @id @default(uuid())
+  userId     String
+  sourceType String
+  sourceId   String
+  targetType String
+  targetId   String
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([sourceType, sourceId])
+  @@index([targetType, targetId])
+}
+
+model WorkspaceEmbedding {
+  id           String                      @id @default(uuid())
+  userId       String
+  sourceType   String
+  sourceId     String
+  contentChunk String                      @db.Text
+  embedding    Unsupported("vector(768)")?
+  createdAt    DateTime                    @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([sourceType, sourceId])
+}
+
+model FocusTelemetry {
+  id              String   @id @default(uuid())
+  userId          String
+  sessionDuration Int
+  typingSpeedWpm  Int
+  cognitiveLoad   String
+  recordedAt      DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model AuditEvent {
+  id         String   @id @default(uuid())
+  userId     String
+  actorType  String
+  action     String
+  entityType String
+  entityId   String
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}

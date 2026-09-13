@@ -1,26 +1,65 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --canvas: #f7f7f9;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --border: #e3e3e8;
+  --border-strong: #cfcfd6;
+  --text: #17171c;
+  --text-muted: #6b6b76;
+  --text-faint: #96969f;
+  --accent: #5b4ee6;
+  --accent-hover: #4c3fd6;
+  --accent-soft: #eeecfd;
+  --danger: #c02b2b;
+  --danger-soft: #fdecec;
+  --shadow: 0 1px 2px rgb(20 20 30 / 0.06), 0 8px 24px rgb(20 20 30 / 0.06);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --canvas: #0b0b0f;
+    --surface: #131319;
+    --surface-raised: #1a1a22;
+    --border: #26262f;
+    --border-strong: #35353f;
+    --text: #ededf0;
+    --text-muted: #9a9aa5;
+    --text-faint: #6c6c78;
+    --accent: #8b7dff;
+    --accent-hover: #9d92ff;
+    --accent-soft: #1e1a3a;
+    --danger: #ff7676;
+    --danger-soft: #2a1618;
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 24px rgb(0 0 0 / 0.35);
   }
 }
 
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-border-subtle: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-text: var(--text);
+  --color-text-muted: var(--text-muted);
+  --color-text-faint: var(--text-faint);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-soft: var(--accent-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--canvas);
+  color: var(--text);
+}
+
+*:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }

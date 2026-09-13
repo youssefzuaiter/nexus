@@ -1,0 +1,141 @@
+"use client";
+
+import { useActionState, useState } from "react";
+import { useFormStatus } from "react-dom";
+import type { ApiResponse } from "@/lib/api-response";
+import type { ProjectOption } from "@/lib/domain";
+import { ProjectSelect } from "@/components/project-select";
+
+type EditorAction<T> = (
+  prevState: ApiResponse<T> | null,
+  formData: FormData,
+) => Promise<ApiResponse<T>>;
+
+type NoteEditorProps<T> = {
+  action: EditorAction<T>;
+  submitLabel: string;
+  projects: ProjectOption[];
+  initial?: {
+    title: string;
+    content: string;
+    tags: string[];
+    isFavorite: boolean;
+    projectId: string | null;
+  };
+  onDelete?: () => Promise<void>;
+};
+
+function SaveButton({ label }: { label: string }) {
+  const { pending } = useFormStatus();
+  return (
+    <button
+      type="submit"
+      disabled={pending}
+      className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-60"
+    >
+      {pending ? "Saving…" : label}
+    </button>
+  );
+}
+
+function DeleteButton() {
+  const { pending } = useFormStatus();
+  return (
+    <button
+      type="submit"
+      disabled={pending}
+      onClick={(event) => {
+        if (!confirm("Delete this note? It will stop appearing in search.")) {
+          event.preventDefault();
+        }
+      }}
+      className="rounded-lg px-3 py-2 text-sm text-text-muted transition-colors hover:bg-danger-soft hover:text-danger disabled:opacity-60"
+    >
+      {pending ? "Deleting…" : "Delete"}
+    </button>
+  );
+}
+
+export function NoteEditor<T>({
+  action,
+  submitLabel,
+  initial,
+  projects,
+  onDelete,
+}: NoteEditorProps<T>) {
+  const [state, formAction] = useActionState(action, null);
+  const [isFavorite, setIsFavorite] = useState(initial?.isFavorite ?? false);
+
+  return (
+    <div className="flex flex-col gap-3">
+      <form action={formAction} className="flex flex-col gap-4">
+        <input
+          name="title"
+          defaultValue={initial?.title}
+          placeholder="Note title"
+          required
+          maxLength={200}
+          aria-label="Note title"
+          className="w-full rounded-lg border border-border-subtle bg-surface px-3 py-2.5 text-lg font-semibold text-text placeholder:text-text-faint focus:border-accent focus:outline-none"
+        />
+
+        <textarea
+          name="content"
+          defaultValue={initial?.content}
+          placeholder="Start writing…"
+          rows={16}
+          aria-label="Note content"
+          className="w-full resize-y rounded-lg border border-border-subtle bg-surface px-3 py-2.5 font-mono text-sm leading-relaxed text-text placeholder:text-text-faint focus:border-accent focus:outline-none"
+        />
+
+        <div className="flex flex-wrap items-center gap-3">
+          <input
+            name="tags"
+            defaultValue={initial?.tags.join(", ")}
+            placeholder="Tags, comma separated"
+            aria-label="Tags"
+            className="min-w-48 flex-1 rounded-lg border border-border-subtle bg-surface px-3 py-2 text-sm text-text placeholder:text-text-faint focus:border-accent focus:outline-none"
+          />
+
+          <label className="flex cursor-pointer select-none items-center gap-2 text-sm text-text-muted">
+            <input
+              type="checkbox"
+              name="isFavorite"
+              checked={isFavorite}
+              onChange={(event) => setIsFavorite(event.target.checked)}
+              className="size-4 accent-[var(--accent)]"
+            />
+            Favorite
+          </label>
+
+          <ProjectSelect projects={projects} defaultValue={initial?.projectId} />
+        </div>
+
+        {state && !state.success && (
+          <p
+            role="alert"
+            className="rounded-lg bg-danger-soft px-3 py-2.5 text-sm text-danger"
+          >
+            {state.error.message}
+          </p>
+        )}
+
+        {state?.success && (
+          <p className="text-sm text-text-muted" role="status">
+            Saved and re-indexed.
+          </p>
+        )}
+
+        <div className="flex items-center gap-2">
+          <SaveButton label={submitLabel} />
+        </div>
+      </form>
+
+      {onDelete && (
+        <form action={onDelete} className="border-t border-border-subtle pt-3">
+          <DeleteButton />
+        </form>
+      )}
+    </div>
+  );
+}
