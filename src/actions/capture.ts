@@ -55,6 +55,8 @@ export async function confirmCaptureAction(
         dueDate: proposal.dueDate ? new Date(proposal.dueDate) : null,
         estimatedMinutes: proposal.estimatedMinutes,
         projectId: null,
+        scheduledStart: null,
+        scheduledEnd: null,
       });
       revalidatePath("/tasks");
       revalidatePath("/");

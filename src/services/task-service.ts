@@ -90,12 +90,39 @@ export async function groupTasks(
   return grouped;
 }
 
+/**
+ * A task may be scheduled with just a start; the block then runs for as long as
+ * the task is estimated to take. An explicit end must be after the start.
+ */
+function resolveSchedule(input: TaskInput): TaskInput {
+  if (!input.scheduledStart) {
+    // An end without a start is meaningless, so it is dropped rather than stored.
+    return { ...input, scheduledStart: null, scheduledEnd: null };
+  }
+
+  if (input.scheduledEnd && input.scheduledEnd <= input.scheduledStart) {
+    throw new AppError(
+      "VALIDATION_ERROR",
+      "The scheduled block must end after it starts.",
+    );
+  }
+
+  return {
+    ...input,
+    scheduledEnd:
+      input.scheduledEnd ??
+      new Date(
+        input.scheduledStart.getTime() + input.estimatedMinutes * 60_000,
+      ),
+  };
+}
+
 export async function createTask(
   userId: string,
   input: TaskInput,
 ): Promise<Task> {
   await assertProjectOwned(userId, input.projectId);
-  const task = await taskRepository.createTask(userId, input);
+  const task = await taskRepository.createTask(userId, resolveSchedule(input));
   await syncTaskIndex(userId, task);
   await recalculateProgress(userId, task.projectId);
   return task;
@@ -109,7 +136,7 @@ export async function updateTask(
   await assertProjectOwned(userId, input.projectId);
 
   const before = await taskRepository.getTask(userId, taskId);
-  const task = await taskRepository.updateTask(userId, taskId, input);
+  const task = await taskRepository.updateTask(userId, taskId, resolveSchedule(input));
   if (!task) {
     throw new AppError("RESOURCE_NOT_FOUND", "That task no longer exists.");
   }

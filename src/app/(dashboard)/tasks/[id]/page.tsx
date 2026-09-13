@@ -11,6 +11,12 @@ import { listProjectOptions } from "@/repositories/project-repository";
 
 export const metadata = { title: "Task · Nexus" };
 
+function toDateTimeInput(date: Date | null): string {
+  if (!date) return "";
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
+}
+
 function toDateInput(date: Date | null): string {
   if (!date) return "";
   const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
@@ -73,6 +79,8 @@ export default async function TaskPage({ params }: PageProps<"/tasks/[id]">) {
           dueDate: toDateInput(task.dueDate),
           estimatedMinutes: task.estimatedMinutes,
           projectId: task.projectId,
+          scheduledStart: toDateTimeInput(task.scheduledStart),
+          scheduledEnd: toDateTimeInput(task.scheduledEnd),
         }}
       />
 

@@ -23,6 +23,8 @@ type TaskFormProps = {
     dueDate: string;
     estimatedMinutes: number;
     projectId: string | null;
+    scheduledStart: string;
+    scheduledEnd: string;
   };
 };
 
@@ -119,6 +121,40 @@ export function TaskForm({
 
         <ProjectSelect projects={projects} defaultValue={initial?.projectId} />
       </div>
+
+      {initial && (
+        <fieldset className="flex flex-wrap items-end gap-2 rounded-lg border border-border-subtle p-3">
+          <legend className="px-1 text-xs text-text-muted">
+            Time block (optional)
+          </legend>
+
+          <label className="flex flex-col gap-1 text-xs text-text-muted">
+            Starts
+            <input
+              type="datetime-local"
+              name="scheduledStart"
+              defaultValue={initial.scheduledStart}
+              aria-label="Scheduled start"
+              className="rounded-lg border border-border-subtle bg-surface-raised px-2.5 py-1.5 text-sm text-text focus:border-accent focus:outline-none"
+            />
+          </label>
+
+          <label className="flex flex-col gap-1 text-xs text-text-muted">
+            Ends
+            <input
+              type="datetime-local"
+              name="scheduledEnd"
+              defaultValue={initial.scheduledEnd}
+              aria-label="Scheduled end"
+              className="rounded-lg border border-border-subtle bg-surface-raised px-2.5 py-1.5 text-sm text-text focus:border-accent focus:outline-none"
+            />
+          </label>
+
+          <p className="w-full text-xs text-text-faint">
+            Leave the end empty and the block runs for the estimate above.
+          </p>
+        </fieldset>
+      )}
 
       {state && !state.success && (
         <p
