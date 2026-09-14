@@ -9,6 +9,7 @@ export type EventInput = {
   endTime: Date;
   location: string | null;
   projectId: string | null;
+  recurrenceId?: string | null;
 };
 
 export async function listEventsInRange(
@@ -73,4 +74,17 @@ export async function deleteEvent(
     where: { id: eventId, userId },
   });
   return count > 0;
+}
+
+/** Ids of this and every later occurrence in the same recurring series. */
+export async function listSeriesEventIds(
+  userId: string,
+  recurrenceId: string,
+  from: Date,
+): Promise<string[]> {
+  const rows = await prisma.event.findMany({
+    where: { userId, recurrenceId, startTime: { gte: from } },
+    select: { id: true },
+  });
+  return rows.map((row) => row.id);
 }

@@ -6,6 +6,7 @@ import { redirect } from "next/navigation";
 import { requireUserId } from "@/lib/session";
 import { type ApiResponse, ok, fail, toApiResponse } from "@/lib/api-response";
 import * as noteService from "@/services/note-service";
+import { extractPdfText } from "@/lib/pdf";
 
 const MAX_TAGS = 12;
 
@@ -91,6 +92,52 @@ export async function updateNoteAction(
   revalidatePath("/projects");
   revalidatePath("/");
   return ok(null);
+}
+
+const MAX_PDF_BYTES = 15 * 1024 * 1024;
+
+export async function importPdfAction(
+  _prevState: ApiResponse<null> | null,
+  formData: FormData,
+): Promise<ApiResponse<null>> {
+  const file = formData.get("file");
+  if (!(file instanceof File) || file.size === 0) {
+    return fail("VALIDATION_ERROR", "Choose a PDF file to import.");
+  }
+  if (file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) {
+    return fail("VALIDATION_ERROR", "Only PDF files can be imported.");
+  }
+  if (file.size > MAX_PDF_BYTES) {
+    return fail(
+      "VALIDATION_ERROR",
+      `That file is too large — the limit is ${MAX_PDF_BYTES / (1024 * 1024)}MB.`,
+    );
+  }
+
+  const titleOverride = (formData.get("title") as string | null)?.trim();
+  const defaultTitle = file.name.replace(/\.pdf$/i, "").trim() || "Imported document";
+
+  let noteId: string;
+  try {
+    const userId = await requireUserId();
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const text = await extractPdfText(bytes);
+    const note = await noteService.createNote(userId, {
+      title: (titleOverride || defaultTitle).slice(0, 200),
+      content: text,
+      tags: ["imported"],
+      isFavorite: false,
+      projectId: null,
+    });
+    noteId = note.id;
+  } catch (error) {
+    return toApiResponse(error);
+  }
+
+  revalidatePath("/notes");
+  revalidatePath("/projects");
+  revalidatePath("/");
+  redirect(`/notes/${noteId}`);
 }
 
 export async function deleteNoteAction(noteId: string): Promise<void> {

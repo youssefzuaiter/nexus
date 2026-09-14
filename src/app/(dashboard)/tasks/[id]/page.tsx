@@ -4,7 +4,12 @@ import { requireUserId } from "@/lib/session";
 import { getTask } from "@/repositories/task-repository";
 import { TaskForm } from "@/components/task-form";
 import { ConfirmDeleteButton } from "@/components/confirm-delete-button";
-import { updateTaskAction, deleteTaskAction, setTaskStatusAction } from "@/actions/tasks";
+import {
+  updateTaskAction,
+  deleteTaskAction,
+  deleteTaskSeriesAction,
+  setTaskStatusAction,
+} from "@/actions/tasks";
 import type { TaskPriority } from "@/lib/domain";
 import { listProjectOptions } from "@/repositories/project-repository";
 
@@ -37,12 +42,19 @@ export default async function TaskPage({ params }: PageProps<"/tasks/[id]">) {
   return (
     <div className="mx-auto max-w-2xl">
       <header className="mb-5 flex items-center justify-between gap-3">
-        <Link
-          href="/tasks"
-          className="text-sm text-text-muted transition-colors hover:text-text"
-        >
-          ← Tasks
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link
+            href="/tasks"
+            className="text-sm text-text-muted transition-colors hover:text-text"
+          >
+            ← Tasks
+          </Link>
+          {task.recurrenceId && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-accent-soft px-2 py-0.5 text-[11px] font-medium text-accent">
+              ↻ Recurring
+            </span>
+          )}
+        </div>
 
         <form action={setTaskStatusAction}>
           <input type="hidden" name="taskId" value={task.id} />
@@ -84,12 +96,19 @@ export default async function TaskPage({ params }: PageProps<"/tasks/[id]">) {
         }}
       />
 
-      <div className="mt-3 border-t border-border-subtle pt-3">
+      <div className="mt-3 flex items-center gap-1 border-t border-border-subtle pt-3">
         <ConfirmDeleteButton
           action={deleteTaskAction.bind(null, task.id)}
           label="Delete task"
           confirmText="Delete this task?"
         />
+        {task.recurrenceId && (
+          <ConfirmDeleteButton
+            action={deleteTaskSeriesAction.bind(null, task.id)}
+            label="Delete this and future occurrences"
+            confirmText="Delete this and every later occurrence in the series? Past occurrences are kept."
+          />
+        )}
       </div>
     </div>
   );

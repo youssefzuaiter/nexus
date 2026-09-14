@@ -16,6 +16,7 @@ export type TaskInput = {
   projectId: string | null;
   scheduledStart: Date | null;
   scheduledEnd: Date | null;
+  recurrenceId?: string | null;
 };
 
 export async function listTasks(
@@ -91,6 +92,31 @@ export async function softDeleteTask(
     data: { deletedAt: new Date() },
   });
   return count > 0;
+}
+
+/** Ids of this and every later occurrence in the same recurring series. */
+export async function listSeriesTaskIds(
+  userId: string,
+  recurrenceId: string,
+  from: Date,
+): Promise<string[]> {
+  const rows = await prisma.task.findMany({
+    where: { userId, recurrenceId, deletedAt: null, dueDate: { gte: from } },
+    select: { id: true },
+  });
+  return rows.map((row) => row.id);
+}
+
+/** Open tasks with no time block yet — the calendar's drag-to-schedule tray. */
+export async function listUnscheduled(userId: string, limit = 20): Promise<Task[]> {
+  return prisma.task.findMany({
+    where: { userId, deletedAt: null, status: { not: "done" }, scheduledStart: null },
+    orderBy: [
+      { dueDate: { sort: "asc", nulls: "last" } },
+      { createdAt: "desc" },
+    ],
+    take: limit,
+  });
 }
 
 /**

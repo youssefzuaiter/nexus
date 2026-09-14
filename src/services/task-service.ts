@@ -1,9 +1,11 @@
 import "server-only";
+import { randomUUID } from "node:crypto";
 import { indexEntity, deleteEntityEmbeddings } from "@/lib/vector";
 import { AppError } from "@/lib/api-response";
 import * as taskRepository from "@/repositories/task-repository";
 import { assertProjectOwned, recalculateProgress } from "@/services/project-service";
-import type { TaskInput, TaskStatus } from "@/repositories/task-repository";
+import { generateOccurrences, type RecurrenceFrequency } from "@/lib/recurrence";
+import type { TaskInput, TaskStatus, TaskPriority } from "@/repositories/task-repository";
 import type { TaskModel as Task } from "@/generated/prisma/models";
 
 export type TaskBucket = "overdue" | "today" | "upcoming" | "someday";
@@ -172,4 +174,92 @@ export async function deleteTask(userId: string, taskId: string): Promise<void> 
   }
   await deleteEntityEmbeddings(userId, "task", taskId);
   await recalculateProgress(userId, before?.projectId);
+}
+
+/**
+ * Materializes `count` real Task rows spaced by `frequency`, anchored on
+ * `input.dueDate` — the same one-time-materialization approach as
+ * `createRecurringEvents` in event-service.ts, for the same reason: every
+ * existing read path already works against real rows with no changes. A
+ * scheduled time block, if set, shifts by the same delta as the due date so
+ * it stays the same time-of-day relative to each occurrence.
+ */
+export async function createRecurringTasks(
+  userId: string,
+  input: TaskInput,
+  frequency: RecurrenceFrequency,
+  count: number,
+): Promise<Task[]> {
+  if (!input.dueDate) {
+    throw new AppError(
+      "VALIDATION_ERROR",
+      "A recurring task needs a due date to repeat from.",
+    );
+  }
+
+  const recurrenceId = randomUUID();
+  const baseDue = input.dueDate.getTime();
+  const dueDates = generateOccurrences(input.dueDate, frequency, count);
+
+  const tasks: Task[] = [];
+  for (const dueDate of dueDates) {
+    const delta = dueDate.getTime() - baseDue;
+    tasks.push(
+      await createTask(userId, {
+        ...input,
+        dueDate,
+        scheduledStart: input.scheduledStart
+          ? new Date(input.scheduledStart.getTime() + delta)
+          : null,
+        scheduledEnd: input.scheduledEnd
+          ? new Date(input.scheduledEnd.getTime() + delta)
+          : null,
+        recurrenceId,
+      }),
+    );
+  }
+  return tasks;
+}
+
+/** Deletes this occurrence and every later one in its series, keeping past ones as history. */
+export async function deleteTaskSeriesFrom(
+  userId: string,
+  taskId: string,
+): Promise<number> {
+  const task = await taskRepository.getTask(userId, taskId);
+  if (!task || !task.recurrenceId || !task.dueDate) {
+    throw new AppError("RESOURCE_NOT_FOUND", "That task no longer exists.");
+  }
+
+  const ids = await taskRepository.listSeriesTaskIds(userId, task.recurrenceId, task.dueDate);
+  for (const id of ids) await deleteTask(userId, id);
+  return ids.length;
+}
+
+/**
+ * Drops a task onto `scheduledStart`, leaving its end to `resolveSchedule`'s
+ * usual estimatedMinutes default. `updateTask` replaces the whole record, so
+ * every other field is read back from the existing row first rather than
+ * only sending the two schedule fields and silently wiping the rest.
+ */
+export async function scheduleTask(
+  userId: string,
+  taskId: string,
+  scheduledStart: Date,
+): Promise<Task> {
+  const existing = await taskRepository.getTask(userId, taskId);
+  if (!existing) {
+    throw new AppError("RESOURCE_NOT_FOUND", "That task no longer exists.");
+  }
+
+  return updateTask(userId, taskId, {
+    title: existing.title,
+    description: existing.description,
+    priority: existing.priority as TaskPriority,
+    dueDate: existing.dueDate,
+    estimatedMinutes: existing.estimatedMinutes,
+    projectId: existing.projectId,
+    scheduledStart,
+    scheduledEnd: null,
+  });
 }

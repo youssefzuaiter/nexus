@@ -4,7 +4,7 @@ import { requireUserId } from "@/lib/session";
 import { getEvent } from "@/repositories/event-repository";
 import { EventForm } from "@/components/event-form";
 import { ConfirmDeleteButton } from "@/components/confirm-delete-button";
-import { updateEventAction, deleteEventAction } from "@/actions/events";
+import { updateEventAction, deleteEventAction, deleteEventSeriesAction } from "@/actions/events";
 import { listProjectOptions } from "@/repositories/project-repository";
 
 
@@ -37,6 +37,11 @@ export default async function EventPage({ params }: PageProps<"/calendar/[id]">)
         >
           ← Calendar
         </Link>
+        {event.recurrenceId && (
+          <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-accent-soft px-2 py-0.5 text-[11px] font-medium text-accent">
+            ↻ Recurring
+          </span>
+        )}
       </header>
 
       <EventForm
@@ -53,12 +58,19 @@ export default async function EventPage({ params }: PageProps<"/calendar/[id]">)
         }}
       />
 
-      <div className="mt-3 border-t border-border-subtle pt-3">
+      <div className="mt-3 flex items-center gap-1 border-t border-border-subtle pt-3">
         <ConfirmDeleteButton
           action={deleteEventAction.bind(null, event.id)}
           label="Delete event"
           confirmText="Delete this event?"
         />
+        {event.recurrenceId && (
+          <ConfirmDeleteButton
+            action={deleteEventSeriesAction.bind(null, event.id)}
+            label="Delete this and future occurrences"
+            confirmText="Delete this and every later occurrence in the series? Past occurrences are kept."
+          />
+        )}
       </div>
     </div>
   );

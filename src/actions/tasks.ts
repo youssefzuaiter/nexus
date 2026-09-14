@@ -7,6 +7,11 @@ import { requireUserId } from "@/lib/session";
 import { type ApiResponse, ok, fail, toApiResponse } from "@/lib/api-response";
 import * as taskService from "@/services/task-service";
 import { TASK_PRIORITIES, TASK_STATUSES } from "@/lib/domain";
+import {
+  RECURRENCE_FREQUENCIES,
+  MAX_RECURRENCE_COUNT,
+  DEFAULT_RECURRENCE_COUNT,
+} from "@/lib/recurrence";
 
 const LOCAL_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/;
 
@@ -56,6 +61,17 @@ const taskSchema = z.object({
     emptyToNull,
     z.string().regex(LOCAL_DATETIME, "Pick a valid end time.").nullable().default(null),
   ),
+  recurrenceFrequency: z.preprocess(
+    emptyToNull,
+    z.enum(RECURRENCE_FREQUENCIES).nullable().default(null),
+  ),
+  recurrenceCount: z.coerce
+    .number()
+    .int()
+    .min(2)
+    .max(MAX_RECURRENCE_COUNT)
+    .nullable()
+    .catch(null),
 });
 
 
@@ -69,6 +85,8 @@ function parseForm(formData: FormData) {
     projectId: formData.get("projectId") ?? "",
     scheduledStart: formData.get("scheduledStart") ?? "",
     scheduledEnd: formData.get("scheduledEnd") ?? "",
+    recurrenceFrequency: formData.get("recurrenceFrequency") ?? "",
+    recurrenceCount: formData.get("recurrenceCount") ?? null,
   });
 
   if (!parsed.success) return parsed;
@@ -110,9 +128,20 @@ export async function createTaskAction(
   const parsed = parseForm(formData);
   if (!parsed.success) return fail("VALIDATION_ERROR", firstIssue(parsed.error));
 
+  const { recurrenceFrequency, recurrenceCount, ...taskInput } = parsed.data;
+
   try {
     const userId = await requireUserId();
-    await taskService.createTask(userId, parsed.data);
+    if (recurrenceFrequency) {
+      await taskService.createRecurringTasks(
+        userId,
+        taskInput,
+        recurrenceFrequency,
+        recurrenceCount ?? DEFAULT_RECURRENCE_COUNT,
+      );
+    } else {
+      await taskService.createTask(userId, taskInput);
+    }
   } catch (error) {
     return toApiResponse(error);
   }
@@ -129,9 +158,32 @@ export async function updateTaskAction(
   const parsed = parseForm(formData);
   if (!parsed.success) return fail("VALIDATION_ERROR", firstIssue(parsed.error));
 
+  // Recurrence is offered only at creation — editing one occurrence never
+  // turns it into (or updates) a series, so only the plain task fields
+  // are forwarded here.
+  const {
+    title,
+    description,
+    priority,
+    dueDate,
+    estimatedMinutes,
+    projectId,
+    scheduledStart,
+    scheduledEnd,
+  } = parsed.data;
+
   try {
     const userId = await requireUserId();
-    await taskService.updateTask(userId, taskId, parsed.data);
+    await taskService.updateTask(userId, taskId, {
+      title,
+      description,
+      priority,
+      dueDate,
+      estimatedMinutes,
+      projectId,
+      scheduledStart,
+      scheduledEnd,
+    });
   } catch (error) {
     return toApiResponse(error);
   }
@@ -164,4 +216,42 @@ export async function deleteTaskAction(taskId: string): Promise<void> {
 
   revalidateTaskViews();
   redirect("/tasks");
+}
+
+export async function deleteTaskSeriesAction(taskId: string): Promise<void> {
+  const userId = await requireUserId();
+  await taskService.deleteTaskSeriesFrom(userId, taskId);
+
+  revalidateTaskViews();
+  redirect("/tasks");
+}
+
+const scheduleDateSchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date.");
+
+/**
+ * Called directly from the calendar's drag-and-drop handler, not through a
+ * form — schedules the task at a default time (09:00 local) on the dropped
+ * date. The precise time is still adjustable afterward from the task's own
+ * time-block fields.
+ */
+export async function scheduleTaskAction(
+  taskId: string,
+  dateStr: string,
+): Promise<ApiResponse<null>> {
+  const parsed = scheduleDateSchema.safeParse(dateStr);
+  if (!parsed.success) return fail("VALIDATION_ERROR", parsed.error.issues[0]?.message ?? "Invalid date.");
+
+  try {
+    const userId = await requireUserId();
+    const [year, month, day] = dateStr.split("-").map(Number);
+    const scheduledStart = new Date(year, month - 1, day, 9, 0, 0, 0);
+    await taskService.scheduleTask(userId, taskId, scheduledStart);
+  } catch (error) {
+    return toApiResponse(error);
+  }
+
+  revalidateTaskViews(taskId);
+  return ok(null);
 }

@@ -43,6 +43,7 @@ export function TaskRow({ task, overdue }: { task: Task; overdue?: boolean }) {
             done ? "text-text-faint line-through" : "text-text"
           }`}
         >
+          {task.recurrenceId && "↻ "}
           {task.title}
         </Link>
 
