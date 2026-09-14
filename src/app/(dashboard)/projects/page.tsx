@@ -3,6 +3,7 @@ import { requireUserId } from "@/lib/session";
 import { listProjects } from "@/repositories/project-repository";
 import { ProjectForm } from "@/components/project-form";
 import { createProjectAction } from "@/actions/projects";
+import { hueForCategory, tintClass } from "@/lib/card-color";
 
 export const metadata = { title: "Projects · Nexus" };
 
@@ -32,12 +33,14 @@ export default async function ProjectsPage() {
           No projects yet. Create one to group notes, tasks and events.
         </p>
       ) : (
-        <ul className="mt-6 flex flex-col gap-2">
+        <ul className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
           {projects.map((project) => (
             <li key={project.id}>
               <Link
                 href={`/projects/${project.id}`}
-                className="block rounded-xl border border-border-subtle bg-surface p-4 transition-colors hover:border-border-strong"
+                className={`block rounded-2xl p-4 transition-transform hover:-translate-y-0.5 ${tintClass(
+                  hueForCategory(project.category),
+                )}`}
               >
                 <div className="flex items-baseline justify-between gap-3">
                   <h2 className="truncate font-medium text-text">
@@ -67,7 +70,7 @@ export default async function ProjectsPage() {
                   </span>
                 </div>
 
-                <p className="mt-2 text-xs text-text-faint">
+                <p className="mt-2 text-xs text-text-muted">
                   {project.counts.notes} notes · {project.counts.openTasks} open
                   of {project.counts.tasks} tasks · {project.counts.events} events
                 </p>

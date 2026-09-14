@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireUserId } from "@/lib/session";
 import { searchNotes } from "@/services/note-service";
 import { listNotes, listTags } from "@/repositories/note-repository";
+import { hueForId, tintClass } from "@/lib/card-color";
 
 export const metadata = { title: "Notes · Nexus" };
 
@@ -128,12 +129,14 @@ export default async function NotesPage({
             : "No notes yet. Create your first one."}
         </p>
       ) : (
-        <ul className="flex flex-col gap-2">
+        <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           {notes.map((note) => (
             <li key={note.id}>
               <Link
                 href={`/notes/${note.id}`}
-                className="block rounded-xl border border-border-subtle bg-surface p-4 transition-colors hover:border-border-strong"
+                className={`block rounded-2xl p-4 transition-transform hover:-translate-y-0.5 ${tintClass(
+                  hueForId(note.id),
+                )}`}
               >
                 <div className="flex items-baseline justify-between gap-3">
                   <h2 className="truncate font-medium text-text">
@@ -144,7 +147,7 @@ export default async function NotesPage({
                     )}
                     {note.title}
                   </h2>
-                  <span className="shrink-0 text-xs text-text-faint">
+                  <span className="shrink-0 text-xs text-text-muted">
                     {formatDate(note.updatedAt)}
                   </span>
                 </div>

@@ -1,39 +1,38 @@
 @import "tailwindcss";
 
 :root {
-  --canvas: #f7f7f9;
-  --surface: #ffffff;
+  --canvas: #efe9db;
+  --surface: #f8f4ea;
   --surface-raised: #ffffff;
-  --border: #e3e3e8;
-  --border-strong: #cfcfd6;
-  --text: #17171c;
-  --text-muted: #6b6b76;
-  --text-faint: #96969f;
-  --accent: #5b4ee6;
-  --accent-hover: #4c3fd6;
-  --accent-soft: #eeecfd;
-  --danger: #c02b2b;
-  --danger-soft: #fdecec;
-  --shadow: 0 1px 2px rgb(20 20 30 / 0.06), 0 8px 24px rgb(20 20 30 / 0.06);
-}
+  --border: #e1d8c4;
+  --border-strong: #cbbea0;
+  --text: #221d15;
+  --text-muted: #6f6656;
+  --text-faint: #9c9282;
+  --accent: #4c82ac;
+  --accent-hover: #3a6989;
+  --accent-soft: #c7dcea;
+  --danger: #ab3a28;
+  --danger-soft: #f3dcd3;
+  --shadow: 0 1px 2px rgb(40 30 15 / 0.05), 0 6px 16px rgb(40 30 15 / 0.06);
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --canvas: #0b0b0f;
-    --surface: #131319;
-    --surface-raised: #1a1a22;
-    --border: #26262f;
-    --border-strong: #35353f;
-    --text: #ededf0;
-    --text-muted: #9a9aa5;
-    --text-faint: #6c6c78;
-    --accent: #8b7dff;
-    --accent-hover: #9d92ff;
-    --accent-soft: #1e1a3a;
-    --danger: #ff7676;
-    --danger-soft: #2a1618;
-    --shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 24px rgb(0 0 0 / 0.35);
-  }
+  /* Pastel card tints, keyed by hue family — used to color-code notes,
+     projects and other "library item" cards instead of one flat surface. */
+  --tint-green: #cfe4c2;
+  --tint-purple: #dad0ea;
+  --tint-gold: #e3d6a0;
+  --tint-rose: #eacbce;
+  --tint-peach: #e9d3b2;
+  --tint-blue: #c7dcea;
+
+  /* Same hue families, saturated — used for small dots/bullets on the
+     cream canvas where a pastel tint would be too washed out to read. */
+  --dot-green: #5e9a55;
+  --dot-purple: #8f76c4;
+  --dot-gold: #b99a3b;
+  --dot-rose: #c97781;
+  --dot-peach: #d99456;
+  --dot-blue: #4c82ac;
 }
 
 @theme inline {
@@ -50,7 +49,8 @@
   --color-accent-soft: var(--accent-soft);
   --color-danger: var(--danger);
   --color-danger-soft: var(--danger-soft);
-  --font-sans: var(--font-geist-sans);
+  --font-sans: var(--font-body);
+  --font-serif: var(--font-heading);
   --font-mono: var(--font-geist-mono);
 }
 
@@ -58,6 +58,26 @@ body {
   background: var(--canvas);
   color: var(--text);
 }
+
+h1 {
+  font-family: var(--font-serif);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.tint-green { background: var(--tint-green); }
+.tint-purple { background: var(--tint-purple); }
+.tint-gold { background: var(--tint-gold); }
+.tint-rose { background: var(--tint-rose); }
+.tint-peach { background: var(--tint-peach); }
+.tint-blue { background: var(--tint-blue); }
+
+.dot-green { background: var(--dot-green); }
+.dot-purple { background: var(--dot-purple); }
+.dot-gold { background: var(--dot-gold); }
+.dot-rose { background: var(--dot-rose); }
+.dot-peach { background: var(--dot-peach); }
+.dot-blue { background: var(--dot-blue); }
 
 *:focus-visible {
   outline: 2px solid var(--accent);
