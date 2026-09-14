@@ -122,6 +122,45 @@ export function TaskForm({
         <ProjectSelect projects={projects} defaultValue={initial?.projectId} />
       </div>
 
+      {!initial && (
+        <fieldset className="flex flex-wrap items-end gap-2 rounded-lg border border-border-subtle p-3">
+          <legend className="px-1 text-xs text-text-muted">Repeat (optional)</legend>
+
+          <label className="flex flex-col gap-1 text-xs text-text-muted">
+            Frequency
+            <select
+              name="recurrenceFrequency"
+              defaultValue=""
+              aria-label="Repeat frequency"
+              className="rounded-lg border border-border-subtle bg-surface-raised px-2.5 py-1.5 text-sm text-text focus:border-accent focus:outline-none"
+            >
+              <option value="">Doesn&apos;t repeat</option>
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+              <option value="monthly">Monthly</option>
+            </select>
+          </label>
+
+          <label className="flex flex-col gap-1 text-xs text-text-muted">
+            Times
+            <input
+              type="number"
+              name="recurrenceCount"
+              defaultValue={8}
+              min={2}
+              max={52}
+              aria-label="Number of occurrences"
+              className="w-20 rounded-lg border border-border-subtle bg-surface-raised px-2.5 py-1.5 text-sm text-text focus:border-accent focus:outline-none"
+            />
+          </label>
+
+          <p className="w-full text-xs text-text-faint">
+            Needs a due date above — each occurrence repeats from it, spaced by
+            frequency.
+          </p>
+        </fieldset>
+      )}
+
       {initial && (
         <fieldset className="flex flex-wrap items-end gap-2 rounded-lg border border-border-subtle p-3">
           <legend className="px-1 text-xs text-text-muted">

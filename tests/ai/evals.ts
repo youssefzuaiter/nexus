@@ -28,6 +28,15 @@ import { toProposal } from "@/lib/ai-tools";
 import * as actionService from "@/services/action-service";
 import * as focusRepository from "@/repositories/focus-repository";
 import { wordsPerMinute, classifyLoad, summarise } from "@/lib/focus";
+import {
+  isRateLimited,
+  registerFailedAttempt,
+  clearAttempts,
+  minutesUntilReset,
+} from "@/lib/rate-limit";
+import { generateOccurrences, MAX_RECURRENCE_COUNT } from "@/lib/recurrence";
+import { normalizeExtractedText, extractPdfText, MAX_TEXT_LENGTH } from "@/lib/pdf";
+import { buildFullExport } from "@/services/export-service";
 
 let passed = 0;
 let failed = 0;
@@ -225,6 +234,55 @@ async function main() {
     check("unpunctuated blob is still split", chunkText("word ".repeat(700)).length >= 3);
     check("short note survives the minimum-length filter", chunkText("Buy milk.").length === 1);
     check("whitespace-only input yields no chunks", chunkText("\n\n \t ").length === 0);
+
+    section("PDF import (pure logic)");
+    check(
+      "ordinary text passes through unchanged",
+      normalizeExtractedText("The syllabus covers weeks 1 through 14.") ===
+        "The syllabus covers weeks 1 through 14.",
+    );
+    check(
+      "surrounding whitespace is trimmed",
+      normalizeExtractedText("  \n  hello  \n  ") === "hello",
+    );
+    {
+      let rejectedEmpty = false;
+      try {
+        normalizeExtractedText("   \n\t  ");
+      } catch (error) {
+        rejectedEmpty = error instanceof AppError && error.code === "VALIDATION_ERROR";
+      }
+      check(
+        "text that is only whitespace is refused, not saved as an empty note",
+        rejectedEmpty,
+        "a scanned (image-only) PDF extracts to nothing",
+      );
+    }
+    {
+      const overLong = "x".repeat(MAX_TEXT_LENGTH + 500);
+      const normalized = normalizeExtractedText(overLong);
+      check(
+        "text past the cap is truncated, not rejected",
+        normalized.length < overLong.length && normalized.startsWith("x".repeat(100)),
+      );
+      check(
+        "truncation is disclosed rather than silent",
+        normalized.includes("Truncated"),
+      );
+    }
+    {
+      let rejectedGarbage = false;
+      try {
+        await extractPdfText(new Uint8Array([1, 2, 3, 4, 5]));
+      } catch (error) {
+        rejectedGarbage = error instanceof AppError && error.code === "VALIDATION_ERROR";
+      }
+      check(
+        "bytes that are not a real PDF are refused with a plain validation error",
+        rejectedGarbage,
+        "the underlying parser's own error is never leaked to the user",
+      );
+    }
 
     section("Re-index consistency");
     const target = fixtures[1];
@@ -939,8 +997,235 @@ async function main() {
         (await eventService.buildMonthGrid(owner.id, 2026, 5, new Date(2026, 5, 15)))
           .every((d) => d.tasks.every((t) => t.id !== derived.id)),
       );
+
+      // Drag-and-drop scheduling: the unscheduled tray and the drop action.
+      const beforeDrop = await taskRepository.listUnscheduled(blockUser.id);
+      check(
+        "an unscheduled task appears in the drag tray",
+        beforeDrop.some((t) => t.id === unscheduled.id),
+      );
+
+      const dropped = await taskService.scheduleTask(
+        blockUser.id,
+        unscheduled.id,
+        new Date(2026, 5, 20, 9, 0),
+      );
+      check(
+        "dropping a task sets its start to the dropped time",
+        dropped.scheduledStart?.getTime() === new Date(2026, 5, 20, 9, 0).getTime(),
+      );
+      check(
+        "the end is derived from the estimate, same as a manual schedule",
+        dropped.scheduledEnd?.getTime() === new Date(2026, 5, 20, 10, 0).getTime(),
+        dropped.scheduledEnd?.toString().slice(0, 21),
+      );
+      check(
+        "every other field survives the drop untouched",
+        dropped.title === "Unscheduled" && dropped.estimatedMinutes === 60,
+        `title=${dropped.title} estimate=${dropped.estimatedMinutes}`,
+      );
+
+      const afterDrop = await taskRepository.listUnscheduled(blockUser.id);
+      check(
+        "a scheduled task leaves the drag tray",
+        afterDrop.every((t) => t.id !== unscheduled.id),
+      );
+
+      const doneTask = await taskService.createTask(blockUser.id, {
+        ...base,
+        title: "Already done",
+        estimatedMinutes: 30,
+        scheduledStart: null,
+        scheduledEnd: null,
+      });
+      await taskService.setTaskStatus(blockUser.id, doneTask.id, "done");
+      const trayWithDone = await taskRepository.listUnscheduled(blockUser.id);
+      check(
+        "a completed task never appears in the drag tray",
+        trayWithDone.every((t) => t.id !== doneTask.id),
+      );
+
+      check(
+        "dropping onto a nonexistent task is refused",
+        await expectAppError("RESOURCE_NOT_FOUND", () =>
+          taskService.scheduleTask(blockUser.id, randomUUID(), new Date(2026, 5, 20, 9, 0)),
+        ),
+      );
+      check(
+        "dropping cannot schedule another account's task",
+        await expectAppError("RESOURCE_NOT_FOUND", () =>
+          taskService.scheduleTask(owner.id, unscheduled.id, new Date(2026, 5, 20, 9, 0)),
+        ),
+      );
     } finally {
       await prisma.user.delete({ where: { id: blockUser.id } });
+    }
+
+    section("Recurrence (pure logic)");
+    {
+      const daily = generateOccurrences(new Date(2026, 8, 15, 9, 0), "daily", 3);
+      check(
+        "daily occurrences are one day apart",
+        daily[1].getTime() - daily[0].getTime() === 24 * 60 * 60 * 1000 &&
+          daily[2].getTime() - daily[1].getTime() === 24 * 60 * 60 * 1000,
+      );
+
+      const weekly = generateOccurrences(new Date(2026, 8, 15, 9, 0), "weekly", 3);
+      check(
+        "weekly occurrences are seven days apart",
+        weekly[1].getTime() - weekly[0].getTime() === 7 * 24 * 60 * 60 * 1000,
+      );
+      check(
+        "time-of-day is preserved across occurrences",
+        weekly.every((d) => d.getHours() === 9 && d.getMinutes() === 0),
+      );
+
+      const monthly = generateOccurrences(new Date(2026, 2, 15, 10, 0), "monthly", 3);
+      check(
+        "monthly occurrences land on the same day of later months",
+        monthly.map((d) => d.getDate()).every((day) => day === 15) &&
+          monthly.map((d) => d.getMonth()).join() === [2, 3, 4].join(),
+      );
+
+      // Jan 31 + 1 month has no 31st in February — it must clamp to the 28th
+      // (2026 is not a leap year), not overflow into March.
+      const monthOverflow = generateOccurrences(new Date(2026, 0, 31), "monthly", 2);
+      check(
+        "a monthly overflow clamps to the last day of the short month, not into the next one",
+        monthOverflow[1].getMonth() === 1 && monthOverflow[1].getDate() === 28,
+        `landed on month ${monthOverflow[1].getMonth()}, day ${monthOverflow[1].getDate()}`,
+      );
+
+      check(
+        "count is clamped to the maximum",
+        generateOccurrences(new Date(), "daily", 9999).length === MAX_RECURRENCE_COUNT,
+      );
+      check(
+        "count below one is clamped up to one",
+        generateOccurrences(new Date(), "daily", 0).length === 1,
+      );
+    }
+
+    section("Recurrence (event and task lifecycle)");
+    const recurUser = await prisma.user.create({
+      data: { email: `recur-${randomUUID()}@test.local`, passwordHash: "eval" },
+    });
+    try {
+      const series = await eventService.createRecurringEvents(
+        recurUser.id,
+        {
+          title: "Lecture",
+          description: null,
+          startTime: new Date(2026, 8, 15, 9, 0),
+          endTime: new Date(2026, 8, 15, 11, 0),
+          location: null,
+          projectId: null,
+        },
+        "weekly",
+        4,
+      );
+      check("a recurring request creates the requested count of events", series.length === 4);
+      check(
+        "every occurrence shares one recurrenceId",
+        new Set(series.map((e) => e.recurrenceId)).size === 1 && series[0].recurrenceId !== null,
+      );
+      check(
+        "every occurrence keeps the original duration",
+        series.every((e) => e.endTime.getTime() - e.startTime.getTime() === 2 * 60 * 60 * 1000),
+      );
+
+      const seriesDeleted = await eventService.deleteEventSeriesFrom(recurUser.id, series[1].id);
+      check(
+        "deleting from the 2nd occurrence removes it and every later one",
+        seriesDeleted === 3,
+      );
+      const remainingEvents = await eventRepository.listEventsInRange(
+        recurUser.id,
+        new Date(2026, 0, 1),
+        new Date(2027, 0, 1),
+      );
+      check(
+        "the 1st occurrence survives a series deletion from the 2nd",
+        remainingEvents.some((e) => e.id === series[0].id),
+      );
+      check(
+        "occurrences 2 through 4 are actually gone",
+        !remainingEvents.some((e) => [series[1].id, series[2].id, series[3].id].includes(e.id)),
+      );
+
+      const oneOff = await eventService.createEvent(recurUser.id, {
+        title: "Standalone",
+        description: null,
+        startTime: new Date(2026, 8, 20, 9, 0),
+        endTime: new Date(2026, 8, 20, 10, 0),
+        location: null,
+        projectId: null,
+      });
+      let rejectedNonSeries = false;
+      try {
+        await eventService.deleteEventSeriesFrom(recurUser.id, oneOff.id);
+      } catch (error) {
+        rejectedNonSeries = error instanceof AppError && error.code === "RESOURCE_NOT_FOUND";
+      }
+      check("deleting the series of a one-off event is refused", rejectedNonSeries);
+
+      const taskSeries = await taskService.createRecurringTasks(
+        recurUser.id,
+        {
+          title: "Reading log",
+          description: null,
+          priority: "medium",
+          dueDate: new Date(2026, 8, 18, 23, 59, 59, 999),
+          estimatedMinutes: 30,
+          projectId: null,
+          scheduledStart: new Date(2026, 8, 18, 20, 0),
+          scheduledEnd: new Date(2026, 8, 18, 20, 30),
+        },
+        "weekly",
+        3,
+      );
+      check("a recurring task request creates the requested count", taskSeries.length === 3);
+      check(
+        "each task's scheduled block shifts by the same delta as its due date",
+        taskSeries.every(
+          (t) =>
+            t.scheduledStart &&
+            t.dueDate &&
+            t.scheduledStart.getDate() === t.dueDate.getDate(),
+        ),
+      );
+
+      let rejectedNoDueDate = false;
+      try {
+        await taskService.createRecurringTasks(
+          recurUser.id,
+          {
+            title: "No anchor",
+            description: null,
+            priority: "medium",
+            dueDate: null,
+            estimatedMinutes: 30,
+            projectId: null,
+            scheduledStart: null,
+            scheduledEnd: null,
+          },
+          "weekly",
+          3,
+        );
+      } catch (error) {
+        rejectedNoDueDate = error instanceof AppError && error.code === "VALIDATION_ERROR";
+      }
+      check("a recurring task with no due date to anchor on is refused", rejectedNoDueDate);
+
+      const taskSeriesDeleted = await taskService.deleteTaskSeriesFrom(recurUser.id, taskSeries[0].id);
+      check("deleting from the 1st task occurrence removes all 3", taskSeriesDeleted === 3);
+
+      check(
+        "another account's series is untouched by this user's deletions",
+        (await prisma.event.count({ where: { userId: owner.id, recurrenceId: { not: null } } })) === 0,
+      );
+    } finally {
+      await prisma.user.delete({ where: { id: recurUser.id } });
     }
 
     section("Focus metrics (pure logic)");
@@ -1042,6 +1327,122 @@ async function main() {
       await prisma.user.delete({ where: { id: focusUser.id } });
     }
 
+    section("Data export");
+    const exportUser = await prisma.user.create({
+      data: { email: `export-${randomUUID()}@test.local`, passwordHash: "eval-secret-hash" },
+    });
+    try {
+      const project = await projectService.createProject(exportUser.id, {
+        title: "Export project",
+        category: "Personal",
+      });
+      const note = await noteService.createNote(exportUser.id, {
+        title: "Export note",
+        content: "Content that must appear in the export.",
+        tags: [],
+        isFavorite: false,
+        projectId: project.id,
+      });
+      const task = await taskService.createTask(exportUser.id, {
+        title: "Export task",
+        description: null,
+        priority: "medium",
+        dueDate: null,
+        estimatedMinutes: 60,
+        projectId: null,
+        scheduledStart: null,
+        scheduledEnd: null,
+      });
+      const trashedNote = await noteService.createNote(exportUser.id, {
+        title: "Trashed note",
+        content: "Should not appear in the export.",
+        tags: [],
+        isFavorite: false,
+        projectId: null,
+      });
+      await noteService.deleteNote(exportUser.id, trashedNote.id);
+
+      const dump = await buildFullExport(exportUser.id);
+      check(
+        "the export identifies the right account",
+        dump.user.id === exportUser.id && dump.user.email === exportUser.email,
+      );
+      check(
+        "the password hash is never in the export",
+        !("passwordHash" in dump.user),
+        Object.keys(dump.user).join(","),
+      );
+      check(
+        "a real note appears in the export",
+        dump.notes.some((n) => n.id === note.id && n.content.includes("must appear")),
+      );
+      check(
+        "a soft-deleted note does not appear in the export",
+        dump.notes.every((n) => n.id !== trashedNote.id),
+      );
+      check(
+        "a real task and project appear in the export",
+        dump.tasks.some((t) => t.id === task.id) &&
+          dump.projects.some((p) => p.id === project.id),
+      );
+
+      const otherUser = await prisma.user.create({
+        data: { email: `export-other-${randomUUID()}@test.local`, passwordHash: "eval" },
+      });
+      try {
+        await noteService.createNote(otherUser.id, {
+          title: "Someone else's note",
+          content: "Must never leak into another account's export.",
+          tags: [],
+          isFavorite: false,
+          projectId: null,
+        });
+        const otherDump = await buildFullExport(otherUser.id);
+        check(
+          "another account's export never includes this user's data",
+          otherDump.notes.every((n) => n.id !== note.id) &&
+            otherDump.tasks.every((t) => t.id !== task.id) &&
+            otherDump.projects.every((p) => p.id !== project.id),
+        );
+      } finally {
+        await prisma.user.delete({ where: { id: otherUser.id } });
+      }
+    } finally {
+      await prisma.user.delete({ where: { id: exportUser.id } });
+    }
+
+    section("Login rate limiting (pure logic)");
+    {
+      const key = `eval-${randomUUID()}`;
+      check("a fresh key is not rate limited", isRateLimited(key) === false);
+
+      for (let i = 0; i < 4; i++) registerFailedAttempt(key);
+      check(
+        "four failed attempts are not yet limited",
+        isRateLimited(key) === false,
+        "the 5th attempt is what trips the limit, not the 4th",
+      );
+
+      registerFailedAttempt(key);
+      check("a fifth failed attempt trips the limit", isRateLimited(key) === true);
+      check(
+        "the correct password is blocked too while limited",
+        isRateLimited(key) === true,
+        "the limiter guards the account, not just wrong guesses — checked before signIn is ever attempted",
+      );
+      check("a reset countdown is reported", minutesUntilReset(key) >= 1);
+
+      clearAttempts(key);
+      check("clearing removes the limit", isRateLimited(key) === false);
+
+      const otherKey = `eval-${randomUUID()}`;
+      check(
+        "a different key has its own independent counter",
+        isRateLimited(otherKey) === false,
+        "attempts against one email must never lock out another account",
+      );
+    }
+
     section("Tool call validation (pure logic)");
     check(
       "an unknown tool is refused",
@@ -1067,6 +1468,22 @@ async function main() {
     check(
       "an absurd estimate is refused",
       toProposal("create_task", { title: "x", estimatedMinutes: 99999 }) === null,
+    );
+    check(
+      "a zero estimate is repaired to the default, not rejected",
+      (() => {
+        const p = toProposal("create_task", { title: "x", estimatedMinutes: 0 });
+        return p?.kind === "task" && p.estimatedMinutes === 60;
+      })(),
+      "a model that omits a duration sometimes writes 0 instead of leaving the field out — this used to fail schema validation and silently drop the whole proposal",
+    );
+    check(
+      "a string '0' estimate is repaired the same way",
+      (() => {
+        const p = toProposal("create_task", { title: "x", estimatedMinutes: "0" });
+        return p?.kind === "task" && p.estimatedMinutes === 60;
+      })(),
+      "the real model output observed in production was the string \"0\", not the number 0",
     );
     check(
       "an unparseable date is refused for events",
@@ -1282,10 +1699,11 @@ async function main() {
       );
       // The model invented 1 January 2024 for a request containing no date at
       // all, so dates in proposals are re-derived from the user's own words.
-      const noDate = await assistantService.decideAction(
+      const noDateProposals = await assistantService.decideAction(
         "Add a task to book my exam slot",
         new Date(2026, 5, 15, 10),
       );
+      const noDate = noDateProposals[0];
       if (noDate) {
         check(
           "a dateless request never becomes a dated event",
@@ -1299,10 +1717,11 @@ async function main() {
         );
       }
 
-      const dated = await assistantService.decideAction(
+      const datedProposals = await assistantService.decideAction(
         "Schedule a dentist appointment next friday at 2pm",
         new Date(2026, 5, 15, 10),
       );
+      const dated = datedProposals[0];
       if (dated) {
         const when =
           dated.kind === "event"
@@ -1319,6 +1738,14 @@ async function main() {
           when ? when.toString().slice(0, 21) : "no date",
         );
       }
+
+      const multi = await assistantService.decideAction(
+        "Add three tasks: buy milk, call the dentist, and submit the essay.",
+        new Date(2026, 5, 15, 10),
+      );
+      console.log(
+        `  NOTE  a three-item request produced ${multi.length} proposal(s) — a 3B model does not reliably call a tool per item`,
+      );
 
       check(
         "no proposal was executed while routing",
@@ -1565,6 +1992,75 @@ async function main() {
       );
     } finally {
       await prisma.user.delete({ where: { id: linkUser.id } });
+    }
+
+    section("Note graph");
+    const graphUser = await prisma.user.create({
+      data: { email: `graph-${randomUUID()}@test.local`, passwordHash: "eval" },
+    });
+    try {
+      const mkGraphNote = (title: string, content: string) =>
+        noteService.createNote(graphUser.id, {
+          title,
+          content,
+          tags: [],
+          isFavorite: false,
+          projectId: null,
+        });
+
+      const a = await mkGraphNote("Graph A", "Links to [[Graph B]] and [[Graph C]].");
+      const b = await mkGraphNote("Graph B", "Links back to [[Graph A]].");
+      const c = await mkGraphNote("Graph C", "No outgoing links.");
+      const isolated = await mkGraphNote("Graph Isolated", "Links to nothing.");
+
+      const graph = await linkRepository.listGraph(graphUser.id);
+      check("every note becomes a node", graph.nodes.length === 4, `${graph.nodes.length} nodes`);
+      check(
+        "isolated note is still a node with no edges",
+        graph.nodes.some((n) => n.id === isolated.id) &&
+          !graph.edges.some((e) => e.source === isolated.id || e.target === isolated.id),
+      );
+      check(
+        "each directional link becomes one edge",
+        graph.edges.length === 3,
+        `${graph.edges.length} edges (A→B, A→C, B→A)`,
+      );
+      check(
+        "an edge references real node ids on both ends",
+        graph.edges.every(
+          (e) => graph.nodes.some((n) => n.id === e.source) && graph.nodes.some((n) => n.id === e.target),
+        ),
+      );
+
+      await noteService.deleteNote(graphUser.id, c.id);
+      const afterDelete = await linkRepository.listGraph(graphUser.id);
+      check(
+        "a deleted note drops out of the graph entirely",
+        !afterDelete.nodes.some((n) => n.id === c.id) &&
+          !afterDelete.edges.some((e) => e.source === c.id || e.target === c.id),
+      );
+
+      const otherGraphUser = await prisma.user.create({
+        data: { email: `graph-other-${randomUUID()}@test.local`, passwordHash: "eval" },
+      });
+      try {
+        await noteService.createNote(otherGraphUser.id, {
+          title: "Someone else's note",
+          content: "Not part of this graph.",
+          tags: [],
+          isFavorite: false,
+          projectId: null,
+        });
+        const otherGraph = await linkRepository.listGraph(otherGraphUser.id);
+        check(
+          "another account's graph never includes this user's notes",
+          otherGraph.nodes.every((n) => n.id !== a.id && n.id !== b.id && n.id !== isolated.id),
+        );
+      } finally {
+        await prisma.user.delete({ where: { id: otherGraphUser.id } });
+      }
+    } finally {
+      await prisma.user.delete({ where: { id: graphUser.id } });
     }
 
     section("Dashboard assembly");

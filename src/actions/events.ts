@@ -6,6 +6,11 @@ import { redirect } from "next/navigation";
 import { requireUserId } from "@/lib/session";
 import { type ApiResponse, ok, fail, toApiResponse } from "@/lib/api-response";
 import * as eventService from "@/services/event-service";
+import {
+  RECURRENCE_FREQUENCIES,
+  MAX_RECURRENCE_COUNT,
+  DEFAULT_RECURRENCE_COUNT,
+} from "@/lib/recurrence";
 
 const emptyToNull = (value: unknown) =>
   typeof value === "string" && value.trim() === "" ? null : value;
@@ -30,6 +35,17 @@ const eventSchema = z.object({
     emptyToNull,
     z.uuid().nullable().default(null),
   ),
+  recurrenceFrequency: z.preprocess(
+    emptyToNull,
+    z.enum(RECURRENCE_FREQUENCIES).nullable().default(null),
+  ),
+  recurrenceCount: z.coerce
+    .number()
+    .int()
+    .min(2)
+    .max(MAX_RECURRENCE_COUNT)
+    .nullable()
+    .catch(null),
 });
 
 // datetime-local has no timezone, and it means local wall-clock time. Building
@@ -49,6 +65,8 @@ function parseForm(formData: FormData) {
     startTime: formData.get("startTime") ?? "",
     endTime: formData.get("endTime") ?? "",
     projectId: formData.get("projectId") ?? "",
+    recurrenceFrequency: formData.get("recurrenceFrequency") ?? "",
+    recurrenceCount: formData.get("recurrenceCount") ?? null,
   });
 
   if (!parsed.success) return parsed;
@@ -81,9 +99,20 @@ export async function createEventAction(
   const parsed = parseForm(formData);
   if (!parsed.success) return fail("VALIDATION_ERROR", firstIssue(parsed.error));
 
+  const { recurrenceFrequency, recurrenceCount, ...eventInput } = parsed.data;
+
   try {
     const userId = await requireUserId();
-    await eventService.createEvent(userId, parsed.data);
+    if (recurrenceFrequency) {
+      await eventService.createRecurringEvents(
+        userId,
+        eventInput,
+        recurrenceFrequency,
+        recurrenceCount ?? DEFAULT_RECURRENCE_COUNT,
+      );
+    } else {
+      await eventService.createEvent(userId, eventInput);
+    }
   } catch (error) {
     return toApiResponse(error);
   }
@@ -100,9 +129,21 @@ export async function updateEventAction(
   const parsed = parseForm(formData);
   if (!parsed.success) return fail("VALIDATION_ERROR", firstIssue(parsed.error));
 
+  // Recurrence is offered only at creation — editing one occurrence never
+  // turns it into (or updates) a series, so only the plain event fields
+  // are forwarded here.
+  const { title, description, location, startTime, endTime, projectId } = parsed.data;
+
   try {
     const userId = await requireUserId();
-    await eventService.updateEvent(userId, eventId, parsed.data);
+    await eventService.updateEvent(userId, eventId, {
+      title,
+      description,
+      location,
+      startTime,
+      endTime,
+      projectId,
+    });
   } catch (error) {
     return toApiResponse(error);
   }
@@ -114,6 +155,14 @@ export async function updateEventAction(
 export async function deleteEventAction(eventId: string): Promise<void> {
   const userId = await requireUserId();
   await eventService.deleteEvent(userId, eventId);
+
+  revalidateCalendar();
+  redirect("/calendar");
+}
+
+export async function deleteEventSeriesAction(eventId: string): Promise<void> {
+  const userId = await requireUserId();
+  await eventService.deleteEventSeriesFrom(userId, eventId);
 
   revalidateCalendar();
   redirect("/calendar");

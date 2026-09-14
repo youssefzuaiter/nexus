@@ -121,6 +121,33 @@ export async function getBacklinks(
   );
 }
 
+export type GraphNode = { id: string; title: string; tags: string[] };
+export type GraphEdge = { source: string; target: string };
+
+/** Every note as a node, and every resolved note-to-note link as an edge. */
+export async function listGraph(
+  userId: string,
+): Promise<{ nodes: GraphNode[]; edges: GraphEdge[] }> {
+  const [notes, links] = await Promise.all([
+    prisma.note.findMany({
+      where: { userId, deletedAt: null },
+      select: { id: true, title: true, tags: true },
+      orderBy: { title: "asc" },
+    }),
+    prisma.entityLink.findMany({
+      where: { userId, sourceType: "note", targetType: "note" },
+      select: { sourceId: true, targetId: true },
+    }),
+  ]);
+
+  const nodeIds = new Set(notes.map((note) => note.id));
+  const edges = links
+    .filter((link) => nodeIds.has(link.sourceId) && nodeIds.has(link.targetId))
+    .map((link) => ({ source: link.sourceId, target: link.targetId }));
+
+  return { nodes: notes, edges };
+}
+
 async function notesByIds(
   userId: string,
   ids: string[],

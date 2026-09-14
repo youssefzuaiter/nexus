@@ -12,3 +12,7 @@ export const TASK_PRIORITIES = ["low", "medium", "high"] as const;
 export type TaskPriority = (typeof TASK_PRIORITIES)[number];
 
 export type ProjectOption = { id: string; title: string };
+
+// Shared between the unscheduled-tasks drag source and the calendar's drop
+// targets so a typo in one place can't silently break the other.
+export const TASK_DRAG_MIME = "application/x-nexus-task-id";

@@ -57,9 +57,14 @@ Rules you must always follow:
 // On its own prompt the same model scored 8/8 on the same cases.
 const ACTION_DECISION_PROMPT = `Decide whether the user is asking you to CREATE something in their workspace.
 
-Call a tool only when they are clearly asking you to add, create, schedule, book, remind them of, or write down something new.
+Call a tool only when they are clearly asking you to add, create, schedule, book, remind them of, or write down something new. If they are asking for more than one distinct thing — "add three tasks: X, Y, Z" or "break this into tasks" — call the tool once per item, not once for the whole request.
 
 Do NOT call any tool when they are asking a question, searching, or asking what something says or contains. In that case reply with the single word: NONE`;
+
+// A model asked for one thing occasionally calls the same tool twice, or a
+// degenerate response calls it dozens of times — cap the batch rather than
+// trust the count, the same way toProposal caps a single field.
+const MAX_PROPOSALS_PER_TURN = 8;
 
 // A cheap prefilter so plain questions never pay for the decision call at all.
 // It only decides whether to *ask* the model; the model still makes the call, so
@@ -115,11 +120,18 @@ function groundDates(
   return proposal;
 }
 
+/**
+ * Every valid proposal the model asked for in one turn, in the order it
+ * asked for them — not just the first. Ollama already returns a real array
+ * of tool calls when the model decides to call the same or different tools
+ * more than once; the only thing gating that here is the cap and the
+ * dateless/absurd-field repairs each individual call still goes through.
+ */
 export async function decideAction(
   question: string,
   now = new Date(),
-): Promise<ActionProposal | null> {
-  if (!ACTION_HINT.test(question)) return null;
+): Promise<ActionProposal[]> {
+  if (!ACTION_HINT.test(question)) return [];
 
   let calls;
   try {
@@ -132,14 +144,16 @@ export async function decideAction(
     );
   } catch {
     // Losing the model should cost the action shortcut, not the whole answer.
-    return null;
+    return [];
   }
 
+  const proposals: ActionProposal[] = [];
   for (const call of calls) {
+    if (proposals.length >= MAX_PROPOSALS_PER_TURN) break;
     const proposal = toProposal(call.name, call.arguments);
-    if (proposal) return groundDates(proposal, question, now);
+    if (proposal) proposals.push(groundDates(proposal, question, now));
   }
-  return null;
+  return proposals;
 }
 
 /**
@@ -281,25 +295,30 @@ export async function* answerQuestion(
   history: ChatMessage[] = [],
   signal?: AbortSignal,
 ): AsyncGenerator<AssistantEvent> {
-  const action = await decideAction(question);
+  const actions = await decideAction(question);
 
   // Retrieval is skipped entirely for action requests — no embedding, no search.
-  const { citations, messages } = action
-    ? { citations: [] as Citation[], messages: [] as ChatMessage[] }
-    : await retrieveContext(userId, question, history);
+  const { citations, messages } = actions.length === 0
+    ? await retrieveContext(userId, question, history)
+    : { citations: [] as Citation[], messages: [] as ChatMessage[] };
 
   // An action request is answered by proposing, not by searching: running the
   // retrieval answer as well would only produce "I could not find that".
-  if (action) {
+  if (actions.length > 0) {
     yield { type: "citations", citations: [] };
     yield {
       type: "delta",
-      text: "I have drafted this for you. Nothing is saved until you confirm it.",
+      text:
+        actions.length === 1
+          ? "I have drafted this for you. Nothing is saved until you confirm it."
+          : `I have drafted ${actions.length} items for you. Nothing is saved until you confirm each one.`,
     };
 
-    const proposalId = randomUUID();
-    await recordProposed(userId, proposalId, action, "assistant");
-    yield { type: "proposal", proposalId, proposal: action };
+    for (const action of actions) {
+      const proposalId = randomUUID();
+      await recordProposed(userId, proposalId, action, "assistant");
+      yield { type: "proposal", proposalId, proposal: action };
+    }
     return;
   }
 

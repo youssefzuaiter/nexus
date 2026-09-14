@@ -149,6 +149,39 @@ link written before its target existed fills itself in — without that, links
 would stay broken until each referrer was edited by hand. Deleting a note clears
 its links in both directions.
 
+**`/notes/graph` renders a force-directed layout with no physics library.** A
+personal note graph is small — tens to a few hundred nodes — so
+`components/note-graph.tsx` runs a plain O(n²) repulsion + spring simulation
+for a fixed 300 iterations to a resting position, once, rather than animating
+every frame or pulling in d3-force. Dragging a node afterward is direct
+position assignment, not re-simulation — only the dragged node needs to move.
+Mutual links between two notes produce two directional `EntityLink` rows, so a
+pair that links both ways draws as one visual edge but counts as two in the
+link total shown in the header, matching what `listGraph` in
+`link-repository.ts` actually returns; that count is deliberately literal
+rather than deduplicated, since it's the same directional-edge model backlinks
+already use.
+
+**`/notes/import` turns a PDF into a plain Note rather than a new entity
+type.** There is no `Document` model, no new `sourceType`, no new citation
+case in the assistant — `importPdfAction` extracts text with `pdf-parse`
+(`lib/pdf.ts`) and calls the exact same `noteService.createNote` every other
+note goes through, tagged `imported`. That single decision is why the feature
+is small: indexing, chunking, semantic search, RAG citations, backlinks and
+the command palette all already work on notes, so an imported syllabus is
+searchable and citable by the assistant with no changes to any of those
+paths — confirmed by checking `WorkspaceEmbedding` after an import rather
+than assumed. `lib/pdf.ts` splits the pure text validation/truncation
+(`normalizeExtractedText`) from the actual parsing (`extractPdfText`) so the
+empty-text rejection and the truncation marker are unit-testable without a
+real PDF fixture — a scanned, image-only PDF extracts to nothing and is
+refused rather than silently saved as an empty note. `next.config.ts` raises `experimental.serverActions.bodySizeLimit` to 15mb
+(the default is far too small for a PDF upload) and marks `pdf-parse` as a
+`serverExternalPackage` so it reads its own runtime assets instead of being
+bundled — both added before the first real upload was driven through the
+browser, rather than added reactively after a failure, since bundling a
+pdfjs-dist-based package is a known enough footgun in Next.js to anticipate.
+
 **Capture parsing splits the work by competence.** Dates and times are resolved
 by `lib/natural-date.ts` in pure code, never by the model — a 3B model will
 confidently give the wrong calendar date for "next Friday". The model only
@@ -161,6 +194,21 @@ the wording, llama3.2:3b still summarises — "coffee with Ada at Starbucks" cam
 back as "Coffee Meeting", losing both the person and the place. Stripping the
 matched date phrases from the original text beats it, so the model's title is
 only a fallback for when stripping leaves nothing.
+
+**Voice input fills the same text box a typed capture would, and nothing
+more.** `components/quick-capture.tsx`'s mic button transcribes through the
+browser's own `SpeechRecognition` — free, on-device wiring with no server
+route or API key — and calls `setText()` with the result, so the transcript
+lands in the exact same input, subject to the exact same "review before it's
+sent" step, as anything typed by hand. There is no separate voice-to-proposal
+path to keep in sync with the typed one. TypeScript's DOM lib does not
+include Web Speech API types, so the component declares the minimal shape it
+actually uses rather than pulling in a types package for one interface.
+Support is checked lazily inside the click handler, not during render or in
+an effect that calls `setState` — checking during render would mean the
+server (no `window`) and the post-hydration client render different DOM for
+the same component, and an unsupported browser simply gets a clear error
+message on click rather than the button being conditionally rendered at all.
 
 **`/api/ai/parse` returns a proposal and writes nothing.** The user confirms
 before anything is created, and `confirmCaptureAction` re-validates the whole
@@ -189,6 +237,53 @@ only a start runs for `estimatedMinutes`, an end without a start is discarded
 rather than stored, and blocks render on the calendar and dashboard as dashed
 outlines so a plan to work is never mistaken for an appointment.
 
+**Dragging a task onto the calendar reuses `updateTask`, not a partial
+patch.** `updateTask` replaces the whole `Task` row — there is no `PATCH`-style
+partial update in this codebase — so `scheduleTask()` in `task-service.ts`
+reads the existing row first and carries every field forward, changing only
+`scheduledStart`/`scheduledEnd`. Skipping that read and sending just the two
+schedule fields would silently null out the title, priority and everything
+else on drop. The drop always lands at 09:00 local on the target day with the
+usual `estimatedMinutes` duration — precise time-of-day dragging would need
+an hourly grid the calendar doesn't have, so the existing task detail page is
+still where you fine-tune the exact time.
+
+`scheduleTaskAction` is called directly from the client drag handler
+(`components/calendar-dnd.tsx`), not through a `<form>` — so unlike every
+other mutation in this codebase, nothing automatically tells the
+already-rendered page to catch up. The handler calls `router.refresh()`
+itself after the action resolves, which no other action in this app needs to
+do. `repositories/task-repository.ts`'s `listUnscheduled()` (open tasks with
+no `scheduledStart`) feeds the draggable tray;
+`components/unscheduled-tasks.tsx` and `calendar-dnd.tsx` share one MIME
+string (`TASK_DRAG_MIME` in `lib/domain.ts`) as the drag payload key so a
+typo in one can't silently desync from the other.
+
+**Recurrence is materialized once, not a stored rule.** "Repeat weekly, 6
+times" creates 6 real `Task`/`Event` rows sharing a `recurrenceId` at request
+time — there is no `RecurrenceRule` model and no background job generating
+future occurrences. This was a deliberate trade against the alternative
+(store a rule, expand it virtually at read time): virtual expansion would
+have touched every read path that queries these tables directly — both
+calendar grid builders, the dashboard, task buckets, the command palette,
+vector indexing, the assistant's tool proposals — since none of them know how
+to expand a rule. Materializing means every one of those paths needed zero
+changes, at the cost of a fixed horizon (`MAX_RECURRENCE_COUNT` = 52 in
+`lib/recurrence.ts`) rather than an open-ended series. `generateOccurrences()`
+clamps a monthly step to the last real day of a short month (Jan 31 → Feb 28,
+not an overflow into March) since `Date.setMonth` on the 31st of a 30-day
+target rolls forward otherwise.
+
+Recurrence is offered only on the create form, never on edit — editing one
+occurrence never turns it into, or updates, a series. "Delete this and future
+occurrences" (`deleteEventSeriesFrom` / `deleteTaskSeriesFrom`) removes this
+row and every later one sharing its `recurrenceId`, keeping earlier ones as
+history, and loops the existing single-delete path per row rather than a raw
+batch query — series are capped at 52, so the N round trips are cheap, and it
+reuses embedding cleanup and progress recalculation instead of duplicating
+them. A task needs a due date to anchor a series on; one with no due date is
+refused with `VALIDATION_ERROR` rather than silently repeating from nothing.
+
 **Derived fields are set in one place.** Project `progress` is computed from
 linked tasks and written only by `recalculateProgress()`, which every task
 mutation calls — including moving a task between projects, which changes both. `completedAt` is written only by
@@ -199,6 +294,17 @@ as an independently editable field.
 bare date string parses as UTC midnight, which lands on the *previous* day for
 anyone behind UTC, silently making today's tasks look overdue. Task buckets are
 whole-day too: a task due at 09:00 is still "today" at 18:00, never overdue.
+
+**Calendar month/week/day views share one `CalendarDay[]` shape and one range
+fetcher.** `buildMonthGrid`, `buildWeekGrid` and `buildDayGrid` in
+`event-service.ts` all call the same `fetchRangeData` + `buildDays` pair with a
+different start date and day count, so the multi-day-event and time-block
+filtering logic exists exactly once. Switching view tabs preserves your place
+rather than jumping to today: the reference date carries over (month's is the
+1st of the month, week's is that week's Monday), so `?view=week` from September
+shows the week containing September 1st, not the current week. Day view skips
+the per-cell item cap (month: 5–6, week: same) and renders a flat chronological
+agenda instead — a day has room for the full list.
 
 ## Testing UI with Playwright
 
@@ -311,6 +417,44 @@ rules have recency and override the tool instruction. On a dedicated prompt the
 same model scored 8/8 on the same cases. A cheap regex prefilter means plain
 questions skip the decision call entirely.
 
+**`decideAction` returns every valid proposal from one turn, not just the
+first.** Ollama already returns a real array of tool calls when the model
+decides to call the tool more than once — the plumbing (`callWithTools`,
+`api/ai/chat/route.ts`'s generic event forwarding, `AssistantChat`'s
+`proposals` array, `ProposalCard`'s independent confirm/decline state) never
+assumed a single proposal; the only thing that ever capped it to one was
+`decideAction` itself returning on the first hit. **Whether the model
+actually calls the tool multiple times is phrasing-dependent and not
+reliable** — "add three tasks: X, Y, Z" got one proposal from llama3.2:3b in
+testing, while "add a task to X. Add a task to Y. Add a task to Z." reliably
+got three. `MAX_PROPOSALS_PER_TURN` (8) caps a degenerate or repeated-call
+response the same way `toProposal` caps a single absurd field, rather than
+trusting the model's count. Each proposal is still recorded and confirmed
+independently through the existing single-proposal path — there is no
+batch-confirm, so a partial accept (2 of 3 confirmed, 1 declined) is just
+what happens when the user clicks two buttons and not the third.
+
+**A model that omits a duration sometimes writes `0` instead of leaving the
+field out.** `estimatedMinutes: args.estimatedMinutes ?? 60` looks like it
+defaults an absent value, but `0` is neither `null` nor `undefined` — it reached
+`z.coerce.number().int().min(1)`, failed validation, and `toProposal` returned
+`null` silently, so an explicit "add a task" request produced no proposal at
+all with no error anywhere. `normalizedMinutes()` in `lib/ai-tools.ts` repairs
+any non-finite or sub-1 value to the default before validation, the same
+"repair rather than reject" treatment already given to a malformed event end
+time in the function below it. Caught by driving the assistant through a real
+browser rather than trusting a green typecheck — this shipped once already.
+
+**`/audit` reads `listAuditTrail`, which existed for two features before this
+page did.** Only the assistant's tool-calling path
+(`recordProposed`/`executeProposal`/`recordDeclined` in `action-service.ts`)
+writes `AuditEvent` rows — natural-language capture (`actions/capture.ts`)
+creates entities directly and audits nothing, since it never runs through the
+proposal/confirm machinery tool calls do. A proposed-then-declined request and
+a proposed-then-confirmed one both leave two rows sharing a `proposalId` in
+`metadata`; the page lists them individually rather than merging, since
+correlating them is a bigger feature than showing what happened.
+
 **Proposal dates are re-derived from the user's words**, never taken from the
 model — asked to create a task from text containing no date at all, it proposed
 an event on 1 January 2024. A request with no date stays a task with no due date.
@@ -318,6 +462,21 @@ an event on 1 January 2024. A request with no date stays a task with no due date
 Detection is measured, not assumed, and the two directions are not equally
 serious: proposing on a plain question is intrusive and is asserted at zero;
 failing to propose is benign and only reported (currently ~2/3).
+
+## Data export
+
+`GET /api/export` (`services/export-service.ts`) dumps everything a user owns
+as one downloadable JSON file — a personal backup/portability feature, not a
+system endpoint, so a plain sidebar `<a href="/api/export">` is enough to
+trigger a real browser download; no client component or fetch/blob dance is
+needed. `passwordHash` is excluded by selecting an explicit field list rather
+than a bare `findUnique`, so a later schema change can't silently start
+leaking it. `WorkspaceEmbedding` is skipped entirely: it's derived and
+regenerable from the content already in the export, and its `vector` column
+is a Prisma `Unsupported` type that cannot be selected into JSON regardless.
+Soft-deleted notes, tasks and projects are left out the same way every other
+read path in this app already treats `deletedAt` as gone — a "trash" is a
+separate feature this app doesn't have, not an export option to add.
 
 ## Auth and route protection
 
@@ -338,6 +497,17 @@ Login failures must stay indistinguishable from unknown-account failures — the
 Credentials provider verifies against a decoy hash when no user matches so response
 timing cannot be used to enumerate accounts.
 
+**`RATE_LIMITED` was declared in the spec's error taxonomy but never thrown
+anywhere** — there was no rate limiting at all. `lib/rate-limit.ts` throttles
+`loginAction` at 5 failed attempts per 15 minutes, keyed by email rather than
+IP: the thing worth limiting is guessing one account's password, and a local
+app has no client IP worth trusting. The check runs *before* `signIn` on every
+attempt, so once tripped, the correct password is blocked too until the window
+resets — the limiter guards the account, not just wrong guesses. An in-memory
+`Map` is enough since this process is the whole deployment; a restart clears
+it, an accepted trade-off for a personal, single-server app. A successful login
+clears the counter for that email.
+
 ## Target directory structure
 
 ```
@@ -348,15 +518,18 @@ src/
 │   ├── (dashboard)/         # Main protected shell — redirects to /login if not
 │   │   ├── layout.tsx       # Sidebar + Command Palette (⌘K)
 │   │   ├── page.tsx         # Dashboard home (Today, Schedule, Recent, Projects)
-│   │   ├── calendar/        # Month grid + Next up, event detail
-│   │   ├── notes/           # List, editor, semantic search, wiki backlinks
+│   │   ├── calendar/        # Month/week/day views + Next up, event detail
+│   │   ├── notes/           # List, editor, semantic search, wiki backlinks, graph view, PDF import
 │   │   ├── tasks/           # Buckets (Overdue/Today/Upcoming/Someday), detail
 │   │   ├── projects/        # Hub with derived progress, linked contents
 │   │   ├── ai/              # RAG Assistant: cited answers + proposals
-│   │   └── focus/           # Opt-in writing telemetry and its controls
-│   └── api/ai/
-│       ├── chat/route.ts    # RAG vector search + LLM generation
-│       └── parse/route.ts   # Capture → proposal (never writes)
+│   │   ├── focus/           # Opt-in writing telemetry and its controls
+│   │   └── audit/           # Read-only AuditEvent trail (proposed/created/declined)
+│   └── api/
+│       ├── ai/
+│       │   ├── chat/route.ts    # RAG vector search + LLM generation
+│       │   └── parse/route.ts   # Capture → proposal (never writes)
+│       └── export/route.ts      # Full-account JSON download
 ├── actions/                 # Server Actions (Zod validated)
 ├── services/                # Domain business logic / use cases
 ├── repositories/            # Data access abstraction layer
@@ -370,6 +543,9 @@ src/
 │   ├── domain.ts            # Shared constants safe to import from client code
 │   ├── session.ts           # requireUserId() — the only source of a userId
 │   ├── password.ts          # scrypt hashing and constant-time verification
+│   ├── rate-limit.ts        # In-memory login attempt throttling
+│   ├── recurrence.ts        # Occurrence-date generation for repeating tasks/events
+│   ├── pdf.ts               # PDF text extraction for /notes/import
 │   └── config.ts            # Fail-fast validated environment configuration
 tests/ai/evals.ts            # AI evaluation & guardrail benchmarks
 prisma/migrations/           # Reviewable migration history

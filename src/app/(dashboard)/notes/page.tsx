@@ -45,12 +45,26 @@ export default async function NotesPage({
             {query && mode === "keyword" && " · keyword match (model offline)"}
           </p>
         </div>
-        <Link
-          href="/notes/new"
-          className="rounded-lg bg-accent px-3.5 py-2 text-sm font-medium text-white transition-colors hover:bg-accent-hover"
-        >
-          New note
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link
+            href="/notes/graph"
+            className="rounded-lg border border-border-subtle px-3.5 py-2 text-sm text-text transition-colors hover:bg-surface-raised"
+          >
+            Graph view
+          </Link>
+          <Link
+            href="/notes/import"
+            className="rounded-lg border border-border-subtle px-3.5 py-2 text-sm text-text transition-colors hover:bg-surface-raised"
+          >
+            Import PDF
+          </Link>
+          <Link
+            href="/notes/new"
+            className="rounded-lg bg-accent px-3.5 py-2 text-sm font-medium text-white transition-colors hover:bg-accent-hover"
+          >
+            New note
+          </Link>
+        </div>
       </header>
 
       <form className="mb-4 flex gap-2">

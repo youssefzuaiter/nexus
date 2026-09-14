@@ -5,6 +5,12 @@ import { signIn, signOut } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { hashPassword } from "@/lib/password";
 import { type ApiResponse, ok, fail, toApiResponse } from "@/lib/api-response";
+import {
+  isRateLimited,
+  registerFailedAttempt,
+  clearAttempts,
+  minutesUntilReset,
+} from "@/lib/rate-limit";
 
 const registerSchema = z.object({
   name: z.string().trim().min(1, "Name is required.").max(80),
@@ -82,10 +88,22 @@ export async function loginAction(
   const { password } = parsed.data;
   const email = parsed.data.email.toLowerCase();
 
+  // Keyed by email, not IP: the thing worth throttling is guessing one
+  // account's password, and this app has no reason to trust a client IP.
+  if (isRateLimited(email)) {
+    const minutes = minutesUntilReset(email);
+    return fail(
+      "RATE_LIMITED",
+      `Too many attempts. Try again in ${minutes} minute${minutes === 1 ? "" : "s"}.`,
+    );
+  }
+
   try {
     await signIn("credentials", { email, password, redirect: false });
+    clearAttempts(email);
     return ok(null);
   } catch {
+    registerFailedAttempt(email);
     // Never distinguish "no such account" from "wrong password" here.
     return fail("AUTH_REQUIRED", "Incorrect email or password.");
   }

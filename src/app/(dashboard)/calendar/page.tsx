@@ -1,15 +1,30 @@
 import Link from "next/link";
 import { requireUserId } from "@/lib/session";
-import { buildMonthGrid } from "@/services/event-service";
+import {
+  buildMonthGrid,
+  buildWeekGrid,
+  buildDayGrid,
+  startOfWeek,
+} from "@/services/event-service";
 import { listUpcomingEvents } from "@/repositories/event-repository";
+import { listUnscheduled } from "@/repositories/task-repository";
 import { EventForm } from "@/components/event-form";
 import { createEventAction } from "@/actions/events";
 import { listProjectOptions } from "@/repositories/project-repository";
-
+import { CalendarGrid, DayAgenda } from "@/components/calendar-dnd";
+import { UnscheduledTasks } from "@/components/unscheduled-tasks";
 
 export const metadata = { title: "Calendar · Nexus" };
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const VIEWS = ["month", "week", "day"] as const;
+type View = (typeof VIEWS)[number];
+
+function parseView(raw: string | undefined): View {
+  return (VIEWS as readonly string[]).includes(raw ?? "")
+    ? (raw as View)
+    : "month";
+}
 
 function parseMonth(raw: string | undefined, now: Date) {
   const match = /^(\d{4})-(\d{2})$/.exec(raw ?? "");
@@ -27,6 +42,27 @@ function monthParam(year: number, month: number): string {
   return `${year}-${String(month + 1).padStart(2, "0")}`;
 }
 
+function parseDateParam(raw: string | undefined, now: Date): Date {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw ?? "");
+  const fallback = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (!match) return fallback;
+
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return Number.isNaN(date.getTime()) ? fallback : date;
+}
+
+function dateParam(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
+    date.getDate(),
+  ).padStart(2, "0")}`;
+}
+
+function addDays(date: Date, days: number): Date {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
 function formatTime(date: Date): string {
   return new Intl.DateTimeFormat("en-GB", {
     hour: "2-digit",
@@ -41,135 +77,156 @@ export default async function CalendarPage({
   const params = await searchParams;
   const now = new Date();
 
+  const view = parseView(typeof params.view === "string" ? params.view : undefined);
   const { year, month } = parseMonth(
     typeof params.month === "string" ? params.month : undefined,
     now,
   );
+  const weekRef = parseDateParam(typeof params.week === "string" ? params.week : undefined, now);
+  const dayRef = parseDateParam(typeof params.date === "string" ? params.date : undefined, now);
 
-  const [days, upcoming, projects] = await Promise.all([
-    buildMonthGrid(userId, year, month, now),
+  // A single reference date per view, used both to fetch the grid and to build
+  // the links for switching between views without losing your place.
+  const referenceDate =
+    view === "week" ? weekRef : view === "day" ? dayRef : new Date(year, month, 1);
+
+  const [days, upcoming, projects, unscheduled] = await Promise.all([
+    view === "week"
+      ? buildWeekGrid(userId, referenceDate, now)
+      : view === "day"
+        ? buildDayGrid(userId, referenceDate, now)
+        : buildMonthGrid(userId, year, month, now),
     listUpcomingEvents(userId, now, 5),
     listProjectOptions(userId),
+    listUnscheduled(userId),
   ]);
 
-  const monthLabel = new Intl.DateTimeFormat("en-GB", {
-    month: "long",
-    year: "numeric",
-  }).format(new Date(year, month, 1));
+  const monthHref = (y: number, m: number) => `/calendar?view=month&month=${monthParam(y, m)}`;
+  const weekHref = (d: Date) => `/calendar?view=week&week=${dateParam(startOfWeek(d))}`;
+  const dayHref = (d: Date) => `/calendar?view=day&date=${dateParam(d)}`;
 
-  const prev = month === 0 ? monthParam(year - 1, 11) : monthParam(year, month - 1);
-  const next = month === 11 ? monthParam(year + 1, 0) : monthParam(year, month + 1);
+  let title: string;
+  let prevHref: string;
+  let nextHref: string;
+  let todayHref: string;
+
+  if (view === "week") {
+    const weekStart = startOfWeek(referenceDate);
+    const weekEnd = addDays(weekStart, 6);
+    const sameMonth = weekStart.getMonth() === weekEnd.getMonth();
+    title = sameMonth
+      ? `${new Intl.DateTimeFormat("en-GB", { day: "numeric" }).format(weekStart)}–${new Intl.DateTimeFormat(
+          "en-GB",
+          { day: "numeric", month: "long", year: "numeric" },
+        ).format(weekEnd)}`
+      : `${new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short" }).format(weekStart)} – ${new Intl.DateTimeFormat(
+          "en-GB",
+          { day: "numeric", month: "short", year: "numeric" },
+        ).format(weekEnd)}`;
+    prevHref = weekHref(addDays(weekStart, -7));
+    nextHref = weekHref(addDays(weekStart, 7));
+    todayHref = weekHref(now);
+  } else if (view === "day") {
+    title = new Intl.DateTimeFormat("en-GB", {
+      weekday: "long",
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+    }).format(referenceDate);
+    prevHref = dayHref(addDays(referenceDate, -1));
+    nextHref = dayHref(addDays(referenceDate, 1));
+    todayHref = dayHref(now);
+  } else {
+    title = new Intl.DateTimeFormat("en-GB", { month: "long", year: "numeric" }).format(
+      new Date(year, month, 1),
+    );
+    prevHref = month === 0 ? monthHref(year - 1, 11) : monthHref(year, month - 1);
+    nextHref = month === 11 ? monthHref(year + 1, 0) : monthHref(year, month + 1);
+    todayHref = monthHref(now.getFullYear(), now.getMonth());
+  }
+
   // A multi-day entry appears in several day cells, so count distinct ids.
-  const inMonth = days.filter((d) => d.inCurrentMonth);
-  const eventCount = new Set(inMonth.flatMap((d) => d.events.map((e) => e.id))).size;
-  const blockCount = new Set(inMonth.flatMap((d) => d.tasks.map((t) => t.id))).size;
+  const counted = view === "month" ? days.filter((d) => d.inCurrentMonth) : days;
+  const eventCount = new Set(counted.flatMap((d) => d.events.map((e) => e.id))).size;
+  const blockCount = new Set(counted.flatMap((d) => d.tasks.map((t) => t.id))).size;
 
   return (
     <div className="mx-auto max-w-4xl">
       <header className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-text">
-            {monthLabel}
-          </h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-text">{title}</h1>
           <p className="mt-1 text-sm text-text-muted">
-            {eventCount} {eventCount === 1 ? "event" : "events"} this month
+            {eventCount} {eventCount === 1 ? "event" : "events"}
+            {view === "month" ? " this month" : view === "week" ? " this week" : " today"}
             {blockCount > 0 &&
               ` · ${blockCount} time ${blockCount === 1 ? "block" : "blocks"}`}
           </p>
         </div>
-        <nav className="flex items-center gap-1.5">
-          <Link
-            href={`/calendar?month=${prev}`}
-            aria-label="Previous month"
-            className="rounded-lg border border-border-subtle px-2.5 py-1.5 text-sm text-text transition-colors hover:bg-surface-raised"
-          >
-            ←
-          </Link>
-          <Link
-            href="/calendar"
-            className="rounded-lg border border-border-subtle px-3 py-1.5 text-sm text-text transition-colors hover:bg-surface-raised"
-          >
-            Today
-          </Link>
-          <Link
-            href={`/calendar?month=${next}`}
-            aria-label="Next month"
-            className="rounded-lg border border-border-subtle px-2.5 py-1.5 text-sm text-text transition-colors hover:bg-surface-raised"
-          >
-            →
-          </Link>
-        </nav>
-      </header>
-
-      <div className="overflow-x-auto">
-        <div className="min-w-[560px]">
-          <div className="grid grid-cols-7 gap-px">
-            {WEEKDAYS.map((day) => (
-              <div
-                key={day}
-                className="pb-1.5 text-center text-xs font-medium text-text-faint"
-              >
-                {day}
-              </div>
-            ))}
-          </div>
-
-          <div className="grid grid-cols-7 gap-px overflow-hidden rounded-xl border border-border-subtle bg-border-subtle">
-            {days.map((day) => (
-              <div
-                key={day.date.toISOString()}
-                className={`min-h-24 bg-surface p-1.5 ${
-                  day.inCurrentMonth ? "" : "opacity-40"
+        <div className="flex flex-wrap items-center gap-3">
+          <nav className="flex items-center gap-0.5 rounded-lg border border-border-subtle p-0.5">
+            {VIEWS.map((v) => (
+              <Link
+                key={v}
+                href={v === "week" ? weekHref(referenceDate) : v === "day" ? dayHref(referenceDate) : monthHref(referenceDate.getFullYear(), referenceDate.getMonth())}
+                className={`rounded-md px-2.5 py-1 text-sm capitalize transition-colors ${
+                  v === view
+                    ? "bg-accent text-white"
+                    : "text-text-muted hover:bg-surface-raised"
                 }`}
               >
-                <span
-                  className={`inline-flex size-5 items-center justify-center rounded-full text-xs ${
-                    day.isToday
-                      ? "bg-accent font-medium text-white"
-                      : "text-text-muted"
-                  }`}
-                >
-                  {day.date.getDate()}
-                </span>
-
-                <ul className="mt-1 flex flex-col gap-0.5">
-                  {day.tasks.slice(0, 2).map((task) => (
-                    <li key={task.id}>
-                      <Link
-                        href={`/tasks/${task.id}`}
-                        title={`${formatTime(task.start)} ${task.title} (time block)`}
-                        className={`block truncate rounded border border-dashed border-border-strong px-1 py-0.5 text-[11px] leading-tight transition-colors hover:border-accent hover:text-accent ${
-                          task.done ? "text-text-faint line-through" : "text-text-muted"
-                        }`}
-                      >
-                        {formatTime(task.start)} {task.title}
-                      </Link>
-                    </li>
-                  ))}
-                  {day.events.slice(0, 3).map((event) => (
-                    <li key={event.id}>
-                      <Link
-                        href={`/calendar/${event.id}`}
-                        title={`${formatTime(event.startTime)} ${event.title}`}
-                        className="block truncate rounded bg-accent-soft px-1 py-0.5 text-[11px] leading-tight text-accent transition-colors hover:bg-accent hover:text-white"
-                      >
-                        {formatTime(event.startTime)} {event.title}
-                      </Link>
-                    </li>
-                  ))}
-                  {day.events.length + day.tasks.length > 5 && (
-                    <li className="px-1 text-[11px] text-text-faint">
-                      +{day.events.length + day.tasks.length - 5} more
-                    </li>
-                  )}
-                </ul>
-              </div>
+                {v}
+              </Link>
             ))}
+          </nav>
+          <nav className="flex items-center gap-1.5">
+            <Link
+              href={prevHref}
+              aria-label={`Previous ${view}`}
+              className="rounded-lg border border-border-subtle px-2.5 py-1.5 text-sm text-text transition-colors hover:bg-surface-raised"
+            >
+              ←
+            </Link>
+            <Link
+              href={todayHref}
+              className="rounded-lg border border-border-subtle px-3 py-1.5 text-sm text-text transition-colors hover:bg-surface-raised"
+            >
+              Today
+            </Link>
+            <Link
+              href={nextHref}
+              aria-label={`Next ${view}`}
+              className="rounded-lg border border-border-subtle px-2.5 py-1.5 text-sm text-text transition-colors hover:bg-surface-raised"
+            >
+              →
+            </Link>
+          </nav>
+        </div>
+      </header>
+
+      {view === "day" ? (
+        <DayAgenda day={days[0]} />
+      ) : (
+        <div className="overflow-x-auto">
+          <div className="min-w-[560px]">
+            <div className="grid grid-cols-7 gap-px">
+              {days.slice(0, 7).map((day, i) => (
+                <div
+                  key={i}
+                  className="pb-1.5 text-center text-xs font-medium text-text-faint"
+                >
+                  {view === "week"
+                    ? `${WEEKDAYS[i]} ${day.date.getDate()}`
+                    : WEEKDAYS[i]}
+                </div>
+              ))}
+            </div>
+
+            <CalendarGrid days={days} tall={view === "week"} />
           </div>
         </div>
-      </div>
+      )}
 
-      <section className="mt-6 grid gap-4 sm:grid-cols-2">
+      <section className="mt-6 grid gap-4 sm:grid-cols-3">
         <div>
           <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-text-faint">
             Add event
@@ -180,6 +237,16 @@ export default async function CalendarPage({
             projects={projects}
             resetOnSuccess
           />
+        </div>
+
+        <div>
+          <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-text-faint">
+            Unscheduled · {unscheduled.length}
+          </h2>
+          <p className="mb-2 text-xs text-text-faint">
+            Drag a task onto a day to block time for it.
+          </p>
+          <UnscheduledTasks tasks={unscheduled} />
         </div>
 
         <div>

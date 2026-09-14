@@ -1,9 +1,11 @@
 import "server-only";
+import { randomUUID } from "node:crypto";
 import { indexEntity, deleteEntityEmbeddings } from "@/lib/vector";
 import { AppError } from "@/lib/api-response";
 import * as eventRepository from "@/repositories/event-repository";
 import * as taskRepository from "@/repositories/task-repository";
 import { assertProjectOwned } from "@/services/project-service";
+import { generateOccurrences, type RecurrenceFrequency } from "@/lib/recurrence";
 import type { EventInput } from "@/repositories/event-repository";
 import type { EventModel as Event } from "@/generated/prisma/models";
 
@@ -13,6 +15,7 @@ export type ScheduledTask = {
   start: Date;
   end: Date;
   done: boolean;
+  recurring: boolean;
 };
 
 export type CalendarDay = {
@@ -110,32 +113,72 @@ export async function deleteEvent(
   await deleteEntityEmbeddings(userId, "event", eventId);
 }
 
+/**
+ * Materializes `count` real Event rows spaced by `frequency`, starting at
+ * `input.startTime` — not a stored rule that gets expanded later, so every
+ * existing read path (calendar grids, dashboard, search, the assistant)
+ * already works against these rows with no changes. Each occurrence keeps
+ * the same duration as the first.
+ */
+export async function createRecurringEvents(
+  userId: string,
+  input: EventInput,
+  frequency: RecurrenceFrequency,
+  count: number,
+): Promise<Event[]> {
+  const recurrenceId = randomUUID();
+  const duration = input.endTime.getTime() - input.startTime.getTime();
+  const starts = generateOccurrences(input.startTime, frequency, count);
+
+  const events: Event[] = [];
+  for (const start of starts) {
+    const end = new Date(start.getTime() + duration);
+    events.push(
+      await createEvent(userId, { ...input, startTime: start, endTime: end, recurrenceId }),
+    );
+  }
+  return events;
+}
+
+/** Deletes this occurrence and every later one in its series, keeping past ones as history. */
+export async function deleteEventSeriesFrom(
+  userId: string,
+  eventId: string,
+): Promise<number> {
+  const event = await eventRepository.getEvent(userId, eventId);
+  if (!event || !event.recurrenceId) {
+    throw new AppError("RESOURCE_NOT_FOUND", "That event no longer exists.");
+  }
+
+  const ids = await eventRepository.listSeriesEventIds(userId, event.recurrenceId, event.startTime);
+  for (const id of ids) await deleteEvent(userId, id);
+  return ids.length;
+}
+
 export function startOfMonth(year: number, month: number): Date {
   return new Date(year, month, 1, 0, 0, 0, 0);
 }
 
-/**
- * Six weeks of days covering the given month, always starting on a Monday, so
- * the grid height never changes between months.
- */
-export async function buildMonthGrid(
+/** The Monday of the week containing `date`, at local midnight. */
+export function startOfWeek(date: Date): Date {
+  const start = new Date(date);
+  const weekdayFromMonday = (date.getDay() + 6) % 7;
+  start.setDate(date.getDate() - weekdayFromMonday);
+  start.setHours(0, 0, 0, 0);
+  return start;
+}
+
+async function fetchRangeData(
   userId: string,
-  year: number,
-  month: number,
-  now = new Date(),
-): Promise<CalendarDay[]> {
-  const first = startOfMonth(year, month);
-
-  const gridStart = new Date(first);
-  const weekdayFromMonday = (first.getDay() + 6) % 7;
-  gridStart.setDate(first.getDate() - weekdayFromMonday);
-
-  const gridEnd = new Date(gridStart);
-  gridEnd.setDate(gridStart.getDate() + 42);
+  rangeStart: Date,
+  days: number,
+): Promise<{ events: Event[]; blocks: ScheduledTask[] }> {
+  const rangeEnd = new Date(rangeStart);
+  rangeEnd.setDate(rangeStart.getDate() + days);
 
   const [events, scheduled] = await Promise.all([
-    eventRepository.listEventsInRange(userId, gridStart, gridEnd),
-    taskRepository.listScheduledInRange(userId, gridStart, gridEnd),
+    eventRepository.listEventsInRange(userId, rangeStart, rangeEnd),
+    taskRepository.listScheduledInRange(userId, rangeStart, rangeEnd),
   ]);
 
   // Scheduled tasks share the calendar with events but stay distinguishable:
@@ -148,15 +191,27 @@ export async function buildMonthGrid(
           start: task.scheduledStart,
           end: task.scheduledEnd,
           done: task.status === "done",
+          recurring: Boolean(task.recurrenceId),
         }]
       : [],
   );
 
+  return { events, blocks };
+}
+
+function buildDays(
+  rangeStart: Date,
+  days: number,
+  now: Date,
+  events: Event[],
+  blocks: ScheduledTask[],
+  inCurrentMonth?: (date: Date) => boolean,
+): CalendarDay[] {
   const todayKey = dayKey(now);
 
-  return Array.from({ length: 42 }, (_, offset) => {
-    const date = new Date(gridStart);
-    date.setDate(gridStart.getDate() + offset);
+  return Array.from({ length: days }, (_, offset) => {
+    const date = new Date(rangeStart);
+    date.setDate(rangeStart.getDate() + offset);
 
     const dayStart = new Date(date);
     const dayEnd = new Date(date);
@@ -164,7 +219,7 @@ export async function buildMonthGrid(
 
     return {
       date,
-      inCurrentMonth: date.getMonth() === month && date.getFullYear() === year,
+      inCurrentMonth: inCurrentMonth ? inCurrentMonth(date) : true,
       isToday: dayKey(date) === todayKey,
       events: events.filter(
         (event) => event.startTime <= dayEnd && event.endTime >= dayStart,
@@ -174,6 +229,51 @@ export async function buildMonthGrid(
       ),
     };
   });
+}
+
+/**
+ * Six weeks of days covering the given month, always starting on a Monday, so
+ * the grid height never changes between months.
+ */
+export async function buildMonthGrid(
+  userId: string,
+  year: number,
+  month: number,
+  now = new Date(),
+): Promise<CalendarDay[]> {
+  const gridStart = startOfWeek(startOfMonth(year, month));
+  const { events, blocks } = await fetchRangeData(userId, gridStart, 42);
+  return buildDays(
+    gridStart,
+    42,
+    now,
+    events,
+    blocks,
+    (date) => date.getMonth() === month && date.getFullYear() === year,
+  );
+}
+
+/** The Monday-to-Sunday week containing `referenceDate`. */
+export async function buildWeekGrid(
+  userId: string,
+  referenceDate: Date,
+  now = new Date(),
+): Promise<CalendarDay[]> {
+  const weekStart = startOfWeek(referenceDate);
+  const { events, blocks } = await fetchRangeData(userId, weekStart, 7);
+  return buildDays(weekStart, 7, now, events, blocks);
+}
+
+/** A single day, returned as a one-element grid so callers share the same shape. */
+export async function buildDayGrid(
+  userId: string,
+  day: Date,
+  now = new Date(),
+): Promise<CalendarDay[]> {
+  const dayStart = new Date(day);
+  dayStart.setHours(0, 0, 0, 0);
+  const { events, blocks } = await fetchRangeData(userId, dayStart, 1);
+  return buildDays(dayStart, 1, now, events, blocks);
 }
 
 function dayKey(date: Date): string {

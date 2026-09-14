@@ -104,6 +104,18 @@ export const OLLAMA_TOOLS = [
 ] as const;
 
 const DEFAULT_EVENT_MINUTES = 60;
+const DEFAULT_TASK_MINUTES = 60;
+
+// A model that was not given a duration sometimes fills the field with 0 rather
+// than omitting it. 0 fails the schema's min(1) and would silently drop the
+// whole proposal, so it is repaired to the default here rather than rejected —
+// the user still sees and confirms the result, same as the event end time below.
+function normalizedMinutes(value: unknown): number {
+  const n = typeof value === "string" ? Number(value) : value;
+  return typeof n === "number" && Number.isFinite(n) && n >= 1
+    ? n
+    : DEFAULT_TASK_MINUTES;
+}
 
 /**
  * Converts a raw tool call into a validated proposal, or null if the model asked
@@ -122,7 +134,7 @@ export function toProposal(
       title: args.title,
       dueDate: args.dueDate ?? null,
       priority: args.priority ?? "medium",
-      estimatedMinutes: args.estimatedMinutes ?? 60,
+      estimatedMinutes: normalizedMinutes(args.estimatedMinutes),
     });
     return result.success ? result.data : null;
   }

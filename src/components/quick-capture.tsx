@@ -1,9 +1,44 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { confirmCaptureAction } from "@/actions/capture";
 import type { Proposal } from "@/services/parse-service";
+
+// The Web Speech API has no official TypeScript DOM types — this is the
+// minimal shape actually used here, not the full spec surface. Free and
+// entirely client-side (no server, no API key); unsupported browsers (all of
+// Firefox, at the time of writing) just never see the mic button.
+interface SpeechRecognitionResultLike {
+  isFinal: boolean;
+  0: { transcript: string };
+}
+interface SpeechRecognitionEventLike extends Event {
+  results: ArrayLike<SpeechRecognitionResultLike>;
+}
+interface SpeechRecognitionLike extends EventTarget {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  start(): void;
+  stop(): void;
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+  onerror: ((event: Event & { error?: string }) => void) | null;
+  onend: (() => void) | null;
+}
+type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
+
+declare global {
+  interface Window {
+    SpeechRecognition?: SpeechRecognitionConstructor;
+    webkitSpeechRecognition?: SpeechRecognitionConstructor;
+  }
+}
+
+function getSpeechRecognitionCtor(): SpeechRecognitionConstructor | null {
+  if (typeof window === "undefined") return null;
+  return window.SpeechRecognition ?? window.webkitSpeechRecognition ?? null;
+}
 
 const KIND_LABEL: Record<Proposal["kind"], string> = {
   task: "Task",
@@ -51,6 +86,54 @@ export function QuickCapture() {
   const [proposal, setProposal] = useState<Proposal | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [listening, setListening] = useState(false);
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+
+  // Cleanup only — nothing here calls setState, so mount/unmount is all this
+  // effect does. Support itself is checked lazily in the click handler
+  // instead of during render, so an unsupported browser never has to render
+  // one thing on the server and another after hydration.
+  useEffect(() => {
+    return () => recognitionRef.current?.stop();
+  }, []);
+
+  function toggleListening() {
+    if (listening) {
+      recognitionRef.current?.stop();
+      return;
+    }
+
+    const Ctor = getSpeechRecognitionCtor();
+    if (!Ctor) {
+      setError("Voice input isn't supported in this browser — try Chrome, Edge or Safari.");
+      return;
+    }
+
+    const recognition = new Ctor();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = navigator.language || "en-US";
+
+    recognition.onresult = (event) => {
+      const transcript = Array.from(event.results)
+        .map((result) => result[0].transcript)
+        .join(" ")
+        .trim();
+      setText(transcript);
+    };
+    recognition.onerror = (event) => {
+      if (event.error && event.error !== "no-speech" && event.error !== "aborted") {
+        setError("Voice input failed — try typing instead.");
+      }
+      setListening(false);
+    };
+    recognition.onend = () => setListening(false);
+
+    recognitionRef.current = recognition;
+    setError(null);
+    setListening(true);
+    recognition.start();
+  }
 
   async function parse() {
     const trimmed = text.trim();
@@ -106,11 +189,30 @@ export function QuickCapture() {
               parse();
             }
           }}
-          placeholder="Capture anything — “coffee with Ada friday 3pm”"
+          placeholder={
+            listening
+              ? "Listening…"
+              : "Capture anything — “coffee with Ada friday 3pm”"
+          }
           aria-label="Quick capture"
           disabled={busy}
           className="flex-1 rounded-lg border border-border-subtle bg-surface px-3.5 py-2.5 text-sm text-text placeholder:text-text-faint focus:border-accent focus:outline-none disabled:opacity-60"
         />
+        <button
+          type="button"
+          onClick={toggleListening}
+          disabled={busy}
+          aria-label={listening ? "Stop voice input" : "Capture by voice"}
+          aria-pressed={listening}
+          title={listening ? "Stop listening" : "Capture by voice"}
+          className={`rounded-lg border px-3 py-2.5 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+            listening
+              ? "animate-pulse border-danger bg-danger-soft text-danger"
+              : "border-border-subtle bg-surface text-text hover:bg-surface-raised"
+          }`}
+        >
+          🎤
+        </button>
         <button
           type="button"
           onClick={parse}

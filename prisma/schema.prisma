@@ -93,6 +93,10 @@ model Task {
   scheduledStart   DateTime?
   scheduledEnd     DateTime?
   completedAt      DateTime?
+  // Shared by every occurrence generated from the same "repeats" request.
+  // Null means the task is a one-off. There is no separate rule row — the
+  // occurrences are materialized once at creation, see lib/recurrence.ts.
+  recurrenceId     String?
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
   deletedAt        DateTime?
@@ -103,6 +107,7 @@ model Task {
 
   @@index([userId])
   @@index([dueDate])
+  @@index([recurrenceId])
 }
 
 model Event {
@@ -114,6 +119,9 @@ model Event {
   startTime   DateTime
   endTime     DateTime
   location    String?
+  // Shared by every occurrence generated from the same "repeats" request.
+  // Null means the event is a one-off — see the matching Task field.
+  recurrenceId String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -122,6 +130,7 @@ model Event {
 
   @@index([userId])
   @@index([startTime])
+  @@index([recurrenceId])
 }
 
 model EntityLink {

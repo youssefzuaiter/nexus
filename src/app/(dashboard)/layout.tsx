@@ -15,6 +15,7 @@ const NAV_ITEMS = [
   { href: "/projects", label: "Projects" },
   { href: "/ai", label: "Assistant" },
   { href: "/focus", label: "Focus" },
+  { href: "/audit", label: "Audit" },
 ];
 
 export default async function DashboardLayout({ children }: LayoutProps<"/">) {
@@ -53,6 +54,12 @@ export default async function DashboardLayout({ children }: LayoutProps<"/">) {
           <p className="truncate px-3 pb-1 text-xs text-text-faint">
             {displayName}
           </p>
+          <a
+            href="/api/export"
+            className="block rounded-lg px-3 py-2 text-left text-sm text-text-muted transition-colors hover:bg-surface-raised hover:text-text"
+          >
+            Export my data
+          </a>
           <SignOutButton />
         </div>
       </aside>
