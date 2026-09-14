@@ -11,6 +11,7 @@ export type TaskInput = {
   title: string;
   description: string | null;
   priority: TaskPriority;
+  tags: string[];
   dueDate: Date | null;
   estimatedMinutes: number;
   projectId: string | null;
@@ -21,12 +22,13 @@ export type TaskInput = {
 
 export async function listTasks(
   userId: string,
-  options: { includeDone?: boolean } = {},
+  options: { includeDone?: boolean; tag?: string } = {},
 ): Promise<Task[]> {
   return prisma.task.findMany({
     where: {
       userId,
       deletedAt: null,
+      ...(options.tag ? { tags: { has: options.tag } } : {}),
       ...(options.includeDone ? {} : { status: { not: "done" } }),
     },
     orderBy: [
@@ -94,6 +96,39 @@ export async function softDeleteTask(
   return count > 0;
 }
 
+export type DeletedTask = Pick<Task, "id" | "title" | "deletedAt">;
+
+export async function listDeletedTasks(userId: string): Promise<DeletedTask[]> {
+  return prisma.task.findMany({
+    where: { userId, deletedAt: { not: null } },
+    select: { id: true, title: true, deletedAt: true },
+    orderBy: { deletedAt: "desc" },
+  });
+}
+
+export async function restoreTask(
+  userId: string,
+  taskId: string,
+): Promise<Task | null> {
+  const { count } = await prisma.task.updateMany({
+    where: { id: taskId, userId, deletedAt: { not: null } },
+    data: { deletedAt: null },
+  });
+  if (count === 0) return null;
+  return getTask(userId, taskId);
+}
+
+/** Permanent. Only ever called on a row that is already soft-deleted. */
+export async function purgeTask(
+  userId: string,
+  taskId: string,
+): Promise<boolean> {
+  const { count } = await prisma.task.deleteMany({
+    where: { id: taskId, userId, deletedAt: { not: null } },
+  });
+  return count > 0;
+}
+
 /** Ids of this and every later occurrence in the same recurring series. */
 export async function listSeriesTaskIds(
   userId: string,
@@ -137,6 +172,15 @@ export async function listScheduledInRange(
     },
     orderBy: { scheduledStart: "asc" },
   });
+}
+
+/** Every distinct tag in use, for the filter bar. */
+export async function listTaskTags(userId: string): Promise<string[]> {
+  const rows = await prisma.task.findMany({
+    where: { userId, deletedAt: null },
+    select: { tags: true },
+  });
+  return [...new Set(rows.flatMap((row) => row.tags))].sort();
 }
 
 export async function countOpenTasks(userId: string): Promise<number> {

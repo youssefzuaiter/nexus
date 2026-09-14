@@ -88,6 +88,7 @@ export default async function TaskPage({ params }: PageProps<"/tasks/[id]">) {
           title: task.title,
           description: task.description,
           priority: task.priority as TaskPriority,
+          tags: task.tags,
           dueDate: toDateInput(task.dueDate),
           estimatedMinutes: task.estimatedMinutes,
           projectId: task.projectId,

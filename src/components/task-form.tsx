@@ -20,6 +20,7 @@ type TaskFormProps = {
     title: string;
     description: string | null;
     priority: TaskPriority;
+    tags: string[];
     dueDate: string;
     estimatedMinutes: number;
     projectId: string | null;
@@ -78,6 +79,14 @@ export function TaskForm({
         rows={initial ? 4 : 2}
         aria-label="Task description"
         className="w-full resize-y rounded-lg border border-border-subtle bg-surface-raised px-3 py-2 text-sm text-text placeholder:text-text-faint focus:border-accent focus:outline-none"
+      />
+
+      <input
+        name="tags"
+        defaultValue={initial?.tags?.join(", ") ?? ""}
+        placeholder="Tags, comma separated"
+        aria-label="Tags"
+        className="w-full rounded-lg border border-border-subtle bg-surface-raised px-3 py-2 text-sm text-text placeholder:text-text-faint focus:border-accent focus:outline-none"
       />
 
       <div className="flex flex-wrap gap-2">

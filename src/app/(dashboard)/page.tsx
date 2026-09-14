@@ -4,6 +4,7 @@ import { auth } from "@/auth";
 import { getDashboard } from "@/services/dashboard-service";
 import { TaskRow } from "@/components/task-row";
 import { QuickCapture } from "@/components/quick-capture";
+import { PlanDay } from "@/components/plan-day";
 import type { EventModel as Event } from "@/generated/prisma/models";
 
 export const metadata = { title: "Dashboard · Nexus" };
@@ -157,6 +158,8 @@ export default async function DashboardPage() {
         </div>
       ) : (
         <div className="flex flex-col gap-6">
+          <PlanDay />
+
           <Panel title="Today" href="/tasks" linkLabel="All tasks">
             {focusCount === 0 ? (
               <Empty>Nothing due today.</Empty>

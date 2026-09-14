@@ -123,6 +123,33 @@ export async function deleteNote(userId: string, noteId: string): Promise<void> 
   await linkRepository.deleteLinksFor(userId, noteId);
 }
 
+/**
+ * Undoes `deleteNote`. Both halves of the delete have to be undone too: the
+ * note is re-indexed so semantic search can see it again, and its links are
+ * re-resolved in both directions — `[[Title]]` mentions written while it was
+ * in the trash resolve to nothing, and stay broken unless referrers are resynced.
+ */
+export async function restoreNote(userId: string, noteId: string): Promise<Note> {
+  const note = await noteRepository.restoreNote(userId, noteId);
+  if (!note) {
+    throw new AppError("RESOURCE_NOT_FOUND", "That note is not in the trash.");
+  }
+
+  await syncNoteIndex(userId, note);
+  await syncNoteLinks(userId, note);
+  await resyncReferrers(userId, note.title, note.id);
+  return note;
+}
+
+export async function purgeNote(userId: string, noteId: string): Promise<void> {
+  // Embeddings and links were already dropped when it was soft-deleted, so
+  // nothing survives the row itself.
+  const purged = await noteRepository.purgeNote(userId, noteId);
+  if (!purged) {
+    throw new AppError("RESOURCE_NOT_FOUND", "That note is not in the trash.");
+  }
+}
+
 async function keywordSearch(
   userId: string,
   query: string,

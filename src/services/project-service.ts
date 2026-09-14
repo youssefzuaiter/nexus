@@ -139,3 +139,32 @@ export async function deleteProject(
 
   await deleteEntityEmbeddings(userId, "project", projectId);
 }
+
+/**
+ * Undoes `deleteProject` as far as it can be undone. Deleting detached the
+ * project's notes, tasks and events by nulling their `projectId`, and that
+ * association is not recorded anywhere else — so a restored project comes back
+ * empty. The UI has to say so rather than implying a full undo.
+ */
+export async function restoreProject(
+  userId: string,
+  projectId: string,
+): Promise<Project> {
+  const project = await projectRepository.restoreProject(userId, projectId);
+  if (!project) {
+    throw new AppError("RESOURCE_NOT_FOUND", "That project is not in the trash.");
+  }
+
+  await syncProjectIndex(userId, project);
+  return project;
+}
+
+export async function purgeProject(
+  userId: string,
+  projectId: string,
+): Promise<void> {
+  const purged = await projectRepository.purgeProject(userId, projectId);
+  if (!purged) {
+    throw new AppError("RESOURCE_NOT_FOUND", "That project is not in the trash.");
+  }
+}

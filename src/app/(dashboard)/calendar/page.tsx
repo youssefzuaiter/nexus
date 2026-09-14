@@ -199,6 +199,12 @@ export default async function CalendarPage({
             >
               →
             </Link>
+            <Link
+              href="/calendar/subscriptions"
+              className="rounded-lg border border-border-subtle px-3 py-1.5 text-sm text-text transition-colors hover:bg-surface-raised"
+            >
+              Import
+            </Link>
           </nav>
         </div>
       </header>

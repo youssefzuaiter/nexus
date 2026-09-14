@@ -128,6 +128,39 @@ export async function softDeleteNote(
   return count > 0;
 }
 
+export type DeletedNote = Pick<Note, "id" | "title" | "deletedAt">;
+
+export async function listDeletedNotes(userId: string): Promise<DeletedNote[]> {
+  return prisma.note.findMany({
+    where: { userId, deletedAt: { not: null } },
+    select: { id: true, title: true, deletedAt: true },
+    orderBy: { deletedAt: "desc" },
+  });
+}
+
+export async function restoreNote(
+  userId: string,
+  noteId: string,
+): Promise<Note | null> {
+  const { count } = await prisma.note.updateMany({
+    where: { id: noteId, userId, deletedAt: { not: null } },
+    data: { deletedAt: null },
+  });
+  if (count === 0) return null;
+  return getNote(userId, noteId);
+}
+
+/** Permanent. Only ever called on a row that is already soft-deleted. */
+export async function purgeNote(
+  userId: string,
+  noteId: string,
+): Promise<boolean> {
+  const { count } = await prisma.note.deleteMany({
+    where: { id: noteId, userId, deletedAt: { not: null } },
+  });
+  return count > 0;
+}
+
 export async function listTags(userId: string): Promise<string[]> {
   const rows = await prisma.note.findMany({
     where: { userId, deletedAt: null },

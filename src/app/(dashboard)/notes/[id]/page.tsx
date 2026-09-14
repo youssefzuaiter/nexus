@@ -14,6 +14,8 @@ import {
 } from "@/repositories/link-repository";
 import { parseWikiLinks } from "@/lib/wiki-links";
 import { NoteLinks } from "@/components/note-links";
+import { listForNote } from "@/repositories/flashcard-repository";
+import { GenerateCards } from "@/components/generate-cards";
 
 
 export const metadata = { title: "Note · Nexus" };
@@ -25,13 +27,15 @@ export default async function NotePage({ params }: PageProps<"/notes/[id]">) {
   const note = await getNote(userId, id);
   if (!note) notFound();
 
-  const [projects, outgoing, backlinks, titles, trackFocus] = await Promise.all([
-    listProjectOptions(userId),
-    getOutgoingLinks(userId, note.id),
-    getBacklinks(userId, note.id),
-    Promise.resolve(parseWikiLinks(note.content)),
-    isTrackingEnabled(userId),
-  ]);
+  const [projects, outgoing, backlinks, titles, trackFocus, cards] =
+    await Promise.all([
+      listProjectOptions(userId),
+      getOutgoingLinks(userId, note.id),
+      getBacklinks(userId, note.id),
+      Promise.resolve(parseWikiLinks(note.content)),
+      isTrackingEnabled(userId),
+      listForNote(userId, note.id),
+    ]);
   const { unresolved } = await resolveNoteTitles(userId, titles);
 
   const updateThisNote = updateNoteAction.bind(null, note.id);
@@ -63,6 +67,10 @@ export default async function NotePage({ params }: PageProps<"/notes/[id]">) {
       />
 
       {trackFocus && <FocusTracker selector='textarea[name="content"]' />}
+
+      <section className="mt-6 border-t border-border-subtle pt-5">
+        <GenerateCards noteId={note.id} existing={cards.length} />
+      </section>
 
       <section className="mt-6 border-t border-border-subtle pt-5">
         <NoteLinks

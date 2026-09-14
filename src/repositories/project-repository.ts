@@ -97,6 +97,41 @@ export async function softDeleteProject(
   return count > 0;
 }
 
+export type DeletedProject = Pick<Project, "id" | "title" | "deletedAt">;
+
+export async function listDeletedProjects(
+  userId: string,
+): Promise<DeletedProject[]> {
+  return prisma.project.findMany({
+    where: { userId, deletedAt: { not: null } },
+    select: { id: true, title: true, deletedAt: true },
+    orderBy: { deletedAt: "desc" },
+  });
+}
+
+export async function restoreProject(
+  userId: string,
+  projectId: string,
+): Promise<Project | null> {
+  const { count } = await prisma.project.updateMany({
+    where: { id: projectId, userId, deletedAt: { not: null } },
+    data: { deletedAt: null },
+  });
+  if (count === 0) return null;
+  return getProject(userId, projectId);
+}
+
+/** Permanent. Only ever called on a row that is already soft-deleted. */
+export async function purgeProject(
+  userId: string,
+  projectId: string,
+): Promise<boolean> {
+  const { count } = await prisma.project.deleteMany({
+    where: { id: projectId, userId, deletedAt: { not: null } },
+  });
+  return count > 0;
+}
+
 export async function setProgress(
   userId: string,
   projectId: string,
