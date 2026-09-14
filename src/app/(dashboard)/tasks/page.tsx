@@ -4,6 +4,8 @@ import { TaskForm } from "@/components/task-form";
 import { TaskRow } from "@/components/task-row";
 import { createTaskAction } from "@/actions/tasks";
 import { listProjectOptions } from "@/repositories/project-repository";
+import { listTaskTags } from "@/repositories/task-repository";
+import Link from "next/link";
 
 import type { TaskModel as Task } from "@/generated/prisma/models";
 
@@ -34,11 +36,17 @@ function Section({
   );
 }
 
-export default async function TasksPage() {
+export default async function TasksPage({
+  searchParams,
+}: PageProps<"/tasks">) {
   const userId = await requireUserId();
-  const [grouped, projects] = await Promise.all([
-    groupTasks(userId),
+  const params = await searchParams;
+  const tag = typeof params.tag === "string" ? params.tag : "";
+
+  const [grouped, projects, tags] = await Promise.all([
+    groupTasks(userId, new Date(), { tag: tag || undefined }),
     listProjectOptions(userId),
+    listTaskTags(userId),
   ]);
 
   const openCount =
@@ -54,8 +62,37 @@ export default async function TasksPage() {
         <p className="mt-1 text-sm text-text-muted">
           {openCount} open
           {grouped.overdue.length > 0 && ` · ${grouped.overdue.length} overdue`}
+          {tag && ` · tagged ${tag}`}
         </p>
       </header>
+
+      {tags.length > 0 && (
+        <div className="mb-4 flex flex-wrap gap-1.5">
+          <Link
+            href="/tasks"
+            className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${
+              tag
+                ? "border-border-subtle text-text-muted hover:bg-surface-raised"
+                : "border-accent bg-accent-soft text-accent"
+            }`}
+          >
+            All
+          </Link>
+          {tags.map((name) => (
+            <Link
+              key={name}
+              href={`/tasks?tag=${encodeURIComponent(name)}`}
+              className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${
+                tag === name
+                  ? "border-accent bg-accent-soft text-accent"
+                  : "border-border-subtle text-text-muted hover:bg-surface-raised"
+              }`}
+            >
+              {name}
+            </Link>
+          ))}
+        </div>
+      )}
 
       <TaskForm
         action={createTaskAction}

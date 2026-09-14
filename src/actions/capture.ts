@@ -52,6 +52,7 @@ export async function confirmCaptureAction(
         title: proposal.title,
         description: null,
         priority: proposal.priority,
+        tags: [],
         dueDate: proposal.dueDate ? new Date(proposal.dueDate) : null,
         estimatedMinutes: proposal.estimatedMinutes,
         projectId: null,

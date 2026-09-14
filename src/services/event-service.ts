@@ -67,6 +67,11 @@ async function syncEventIndex(userId: string, event: Event): Promise<void> {
   }
 }
 
+/** Lets the calendar-feed importer index the rows it writes with exactly the
+ *  same phrasing as an event created by hand, without duplicating
+ *  `embeddableText` or exposing it. */
+export const indexEvent = syncEventIndex;
+
 function assertValidRange(input: EventInput): void {
   if (input.endTime <= input.startTime) {
     throw new AppError(

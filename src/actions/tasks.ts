@@ -15,6 +15,9 @@ import {
 
 const LOCAL_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/;
 
+// Matches the note tag limit; the two share a filter UI and a mental model.
+const MAX_TAGS = 12;
+
 // datetime-local carries no timezone and means local wall-clock time; building
 // the Date from parts keeps it local, where new Date(string) would read it as UTC.
 function fromLocalInput(value: string | null): Date | null {
@@ -35,6 +38,19 @@ const taskSchema = z.object({
     z.string().trim().max(5000).nullable().default(null),
   ),
   priority: z.enum(TASK_PRIORITIES).default("medium"),
+  tags: z
+    .string()
+    .default("")
+    .transform((raw) =>
+      [
+        ...new Set(
+          raw
+            .split(",")
+            .map((tag) => tag.trim().toLowerCase())
+            .filter(Boolean),
+        ),
+      ].slice(0, MAX_TAGS),
+    ),
   dueDate: z.preprocess(
     emptyToNull,
     z
@@ -80,6 +96,7 @@ function parseForm(formData: FormData) {
     title: formData.get("title"),
     description: formData.get("description") ?? "",
     priority: formData.get("priority") ?? "medium",
+    tags: formData.get("tags") ?? "",
     dueDate: formData.get("dueDate") ?? "",
     estimatedMinutes: formData.get("estimatedMinutes") ?? 60,
     projectId: formData.get("projectId") ?? "",
@@ -170,6 +187,7 @@ export async function updateTaskAction(
     projectId,
     scheduledStart,
     scheduledEnd,
+    tags,
   } = parsed.data;
 
   try {
@@ -178,6 +196,7 @@ export async function updateTaskAction(
       title,
       description,
       priority,
+      tags,
       dueDate,
       estimatedMinutes,
       projectId,

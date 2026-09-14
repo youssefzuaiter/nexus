@@ -34,7 +34,9 @@ function embeddableText(task: Task): string {
 
   const state = task.status === "done" ? " It is already completed." : "";
 
-  const sentence = `${task.title}. This is a task${due}, with ${task.priority} priority, estimated at ${task.estimatedMinutes} minutes.${state}`;
+  const tagLine =
+    task.tags.length > 0 ? ` It is tagged ${task.tags.join(", ")}.` : "";
+  const sentence = `${task.title}. This is a task${due}, with ${task.priority} priority, estimated at ${task.estimatedMinutes} minutes.${state}${tagLine}`;
 
   return task.description ? `${sentence}\n\n${task.description}` : sentence;
 }
@@ -66,8 +68,12 @@ export function bucketOf(task: Task, now = new Date()): TaskBucket {
 export async function groupTasks(
   userId: string,
   now = new Date(),
+  options: { tag?: string } = {},
 ): Promise<GroupedTasks> {
-  const tasks = await taskRepository.listTasks(userId, { includeDone: true });
+  const tasks = await taskRepository.listTasks(userId, {
+    includeDone: true,
+    tag: options.tag,
+  });
 
   const grouped: GroupedTasks = {
     overdue: [],
@@ -177,6 +183,28 @@ export async function deleteTask(userId: string, taskId: string): Promise<void> 
 }
 
 /**
+ * Undoes `deleteTask`. A restored task counts towards its project again, so
+ * progress has to be recomputed as well as the index rebuilt.
+ */
+export async function restoreTask(userId: string, taskId: string): Promise<Task> {
+  const task = await taskRepository.restoreTask(userId, taskId);
+  if (!task) {
+    throw new AppError("RESOURCE_NOT_FOUND", "That task is not in the trash.");
+  }
+
+  await syncTaskIndex(userId, task);
+  await recalculateProgress(userId, task.projectId);
+  return task;
+}
+
+export async function purgeTask(userId: string, taskId: string): Promise<void> {
+  const purged = await taskRepository.purgeTask(userId, taskId);
+  if (!purged) {
+    throw new AppError("RESOURCE_NOT_FOUND", "That task is not in the trash.");
+  }
+}
+
+/**
  * Materializes `count` real Task rows spaced by `frequency`, anchored on
  * `input.dueDate` — the same one-time-materialization approach as
  * `createRecurringEvents` in event-service.ts, for the same reason: every
@@ -256,6 +284,7 @@ export async function scheduleTask(
     title: existing.title,
     description: existing.description,
     priority: existing.priority as TaskPriority,
+    tags: existing.tags,
     dueDate: existing.dueDate,
     estimatedMinutes: existing.estimatedMinutes,
     projectId: existing.projectId,

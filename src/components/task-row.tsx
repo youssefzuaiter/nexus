@@ -62,6 +62,14 @@ export function TaskRow({ task, overdue }: { task: Task; overdue?: boolean }) {
           )}
           <span className={PRIORITY_STYLES[task.priority]}>{task.priority}</span>
           <span className="text-text-faint">{task.estimatedMinutes}m</span>
+          {task.tags.map((name) => (
+            <span
+              key={name}
+              className="rounded-full bg-surface-raised px-2 py-0.5 text-text-muted"
+            >
+              {name}
+            </span>
+          ))}
         </div>
       </div>
     </li>
