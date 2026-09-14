@@ -53,6 +53,7 @@ export async function confirmCaptureAction(
         description: null,
         priority: proposal.priority,
         tags: [],
+        courseId: null,
         dueDate: proposal.dueDate ? new Date(proposal.dueDate) : null,
         estimatedMinutes: proposal.estimatedMinutes,
         projectId: null,
@@ -84,6 +85,7 @@ export async function confirmCaptureAction(
       tags: [],
       isFavorite: false,
       projectId: null,
+      courseId: null,
     });
     revalidatePath("/notes");
     revalidatePath("/");

@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { PdfImportForm } from "@/components/pdf-import-form";
+import { MarkdownImportForm } from "@/components/markdown-import-form";
 
-export const metadata = { title: "Import PDF · Nexus" };
+export const metadata = { title: "Import · Nexus" };
 
 export default function ImportPdfPage() {
   return (
@@ -14,7 +15,7 @@ export default function ImportPdfPage() {
           ← Notes
         </Link>
         <h1 className="mt-2 text-2xl font-semibold tracking-tight text-text">
-          Import a PDF
+          Import notes
         </h1>
         <p className="mt-1 text-sm text-text-muted">
           Extracts the text and saves it as a regular note — searchable,
@@ -24,7 +25,21 @@ export default function ImportPdfPage() {
         </p>
       </header>
 
+      <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-text-faint">
+        From a PDF
+      </h2>
       <PdfImportForm />
+
+      <h2 className="mb-2 mt-6 text-xs font-medium uppercase tracking-wide text-text-faint">
+        From Markdown files
+      </h2>
+      <p className="mb-2 text-sm text-text-muted">
+        Select any number of .md files — from Obsidian, a wiki export, or
+        anywhere else. Each becomes its own note, titled by its first heading if
+        it has one. Existing <code className="font-mono text-xs">[[links]]</code>{" "}
+        resolve as soon as the notes they point at are imported too.
+      </p>
+      <MarkdownImportForm />
     </div>
   );
 }

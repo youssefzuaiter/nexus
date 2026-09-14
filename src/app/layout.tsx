@@ -21,6 +21,8 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Nexus",
   description: "An AI-native personal knowledge and productivity workspace.",
+  appleWebApp: { capable: true, title: "Nexus", statusBarStyle: "default" },
+  icons: { icon: "/icon.svg", apple: "/icon.svg" },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

@@ -9,6 +9,7 @@ import {
 import { AppError } from "@/lib/api-response";
 import * as noteRepository from "@/repositories/note-repository";
 import { assertProjectOwned } from "@/services/project-service";
+import { assertCourseOwned } from "@/services/course-service";
 import { parseWikiLinks } from "@/lib/wiki-links";
 import * as linkRepository from "@/repositories/link-repository";
 import type { NoteInput, NoteSummary } from "@/repositories/note-repository";
@@ -81,6 +82,7 @@ export async function createNote(
   input: NoteInput,
 ): Promise<Note> {
   await assertProjectOwned(userId, input.projectId);
+  await assertCourseOwned(userId, input.courseId);
   const note = await noteRepository.createNote(userId, input);
   await syncNoteIndex(userId, note);
   await syncNoteLinks(userId, note);
@@ -94,8 +96,17 @@ export async function updateNote(
   input: NoteInput,
 ): Promise<Note> {
   await assertProjectOwned(userId, input.projectId);
+  await assertCourseOwned(userId, input.courseId);
 
   const before = await noteRepository.getNote(userId, noteId);
+
+  // Snapshot the outgoing text before it is overwritten. A save that changes
+  // nothing is not worth a version, and the editor replaces content wholesale,
+  // so this is the only thing standing between a bad paste and lost work.
+  if (before && (before.content !== input.content || before.title !== input.title)) {
+    await noteRepository.snapshot(userId, before);
+  }
+
   const note = await noteRepository.updateNote(userId, noteId, input);
   if (!note) {
     throw new AppError("RESOURCE_NOT_FOUND", "That note no longer exists.");
@@ -110,6 +121,35 @@ export async function updateNote(
     await resyncReferrers(userId, note.title, note.id);
   }
   return note;
+}
+
+/**
+ * Restores a snapshot by writing it back through `updateNote`, so the current
+ * text is itself snapshotted first — restoring is undoable in turn, and the
+ * index and links are resynced by the same path every other save uses.
+ */
+export async function restoreVersion(
+  userId: string,
+  versionId: string,
+): Promise<Note> {
+  const version = await noteRepository.getVersion(userId, versionId);
+  if (!version) {
+    throw new AppError("RESOURCE_NOT_FOUND", "That version no longer exists.");
+  }
+
+  const current = await noteRepository.getNote(userId, version.noteId);
+  if (!current) {
+    throw new AppError("RESOURCE_NOT_FOUND", "That note no longer exists.");
+  }
+
+  return updateNote(userId, version.noteId, {
+    title: version.title,
+    content: version.content,
+    tags: current.tags,
+    isFavorite: current.isFavorite,
+    projectId: current.projectId,
+    courseId: current.courseId,
+  });
 }
 
 export async function deleteNote(userId: string, noteId: string): Promise<void> {
