@@ -34,6 +34,10 @@ const noteSchema = z.object({
     emptyToNull,
     z.uuid().nullable().default(null),
   ),
+  courseId: z.preprocess(
+    emptyToNull,
+    z.uuid().nullable().default(null),
+  ),
 });
 
 function parseForm(formData: FormData) {
@@ -43,6 +47,7 @@ function parseForm(formData: FormData) {
     tags: formData.get("tags") ?? "",
     isFavorite: formData.get("isFavorite"),
     projectId: formData.get("projectId") ?? "",
+    courseId: formData.get("courseId") ?? "",
   });
 }
 
@@ -128,6 +133,7 @@ export async function importPdfAction(
       tags: ["imported"],
       isFavorite: false,
       projectId: null,
+      courseId: null,
     });
     noteId = note.id;
   } catch (error) {
@@ -138,6 +144,74 @@ export async function importPdfAction(
   revalidatePath("/projects");
   revalidatePath("/");
   redirect(`/notes/${noteId}`);
+}
+
+const MAX_MARKDOWN_BYTES = 2 * 1024 * 1024;
+const MAX_MARKDOWN_FILES = 50;
+
+/**
+ * Imports one or more .md files as ordinary notes — the same decision the PDF
+ * importer made, and for the same reason: everything downstream (indexing,
+ * backlinks, cards, citations) already works on notes and needs no new cases.
+ *
+ * A leading `# Heading` becomes the title, since that is how a Markdown file
+ * from Obsidian or a wiki usually names itself; otherwise the filename is used.
+ */
+export async function importMarkdownAction(
+  _prevState: ApiResponse<{ imported: number }> | null,
+  formData: FormData,
+): Promise<ApiResponse<{ imported: number }>> {
+  const files = formData
+    .getAll("files")
+    .filter((entry): entry is File => entry instanceof File && entry.size > 0);
+
+  if (files.length === 0) {
+    return fail("VALIDATION_ERROR", "Choose at least one .md file.");
+  }
+  if (files.length > MAX_MARKDOWN_FILES) {
+    return fail(
+      "VALIDATION_ERROR",
+      `That is more than ${MAX_MARKDOWN_FILES} files at once.`,
+    );
+  }
+
+  const oversized = files.find((file) => file.size > MAX_MARKDOWN_BYTES);
+  if (oversized) {
+    return fail("VALIDATION_ERROR", `“${oversized.name}” is too large.`);
+  }
+
+  try {
+    const userId = await requireUserId();
+
+    let imported = 0;
+    for (const file of files) {
+      const text = await file.text();
+      if (!text.trim()) continue;
+
+      const fromFilename = file.name.replace(/\.(md|markdown|txt)$/i, "").trim();
+      const heading = /^#\s+(.+)$/m.exec(text.slice(0, 500))?.[1]?.trim();
+
+      await noteService.createNote(userId, {
+        title: (heading || fromFilename || "Imported note").slice(0, 200),
+        content: text,
+        tags: ["imported"],
+        isFavorite: false,
+        projectId: null,
+        courseId: null,
+      });
+      imported++;
+    }
+
+    if (imported === 0) {
+      return fail("VALIDATION_ERROR", "Those files had no text in them.");
+    }
+
+    revalidatePath("/notes");
+    revalidatePath("/");
+    return ok({ imported });
+  } catch (error) {
+    return toApiResponse(error);
+  }
 }
 
 export async function deleteNoteAction(noteId: string): Promise<void> {

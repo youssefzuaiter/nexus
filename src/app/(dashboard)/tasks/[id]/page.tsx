@@ -12,6 +12,8 @@ import {
 } from "@/actions/tasks";
 import type { TaskPriority } from "@/lib/domain";
 import { listProjectOptions } from "@/repositories/project-repository";
+import { listCourseOptions } from "@/repositories/course-repository";
+import { StudyTimer } from "@/components/study-timer";
 
 
 export const metadata = { title: "Task · Nexus" };
@@ -35,7 +37,10 @@ export default async function TaskPage({ params }: PageProps<"/tasks/[id]">) {
   const task = await getTask(userId, id);
   if (!task) notFound();
 
-  const projects = await listProjectOptions(userId);
+  const [projects, courses] = await Promise.all([
+    listProjectOptions(userId),
+    listCourseOptions(userId),
+  ]);
 
   const done = task.status === "done";
 
@@ -80,10 +85,15 @@ export default async function TaskPage({ params }: PageProps<"/tasks/[id]">) {
         </p>
       )}
 
+      <div className="mb-4">
+        <StudyTimer taskTitle={task.title} />
+      </div>
+
       <TaskForm
         action={updateTaskAction.bind(null, task.id)}
         submitLabel="Save changes"
         projects={projects}
+        courses={courses}
         initial={{
           title: task.title,
           description: task.description,
@@ -92,6 +102,7 @@ export default async function TaskPage({ params }: PageProps<"/tasks/[id]">) {
           dueDate: toDateInput(task.dueDate),
           estimatedMinutes: task.estimatedMinutes,
           projectId: task.projectId,
+          courseId: task.courseId,
           scheduledStart: toDateTimeInput(task.scheduledStart),
           scheduledEnd: toDateTimeInput(task.scheduledEnd),
         }}

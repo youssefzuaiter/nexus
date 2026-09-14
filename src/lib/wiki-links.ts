@@ -2,6 +2,13 @@
 // import so it can be tested and reused without a Prisma connection.
 
 const WIKI_LINK = /\[\[([^\[\]\n]+)\]\]/g;
+
+/** The same syntax, for renderers that substitute links into parsed text.
+ *  Exported as a factory because a /g regex carries mutable lastIndex state
+ *  and must not be shared between callers. */
+export function wikiLinkPattern(): RegExp {
+  return new RegExp(WIKI_LINK.source, "g");
+}
 const MAX_LINKS = 50;
 
 /**

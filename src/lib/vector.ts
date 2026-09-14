@@ -116,3 +116,58 @@ export async function searchWorkspaceVectors(
     );
   }
 }
+
+export type SimilarEntity = {
+  sourceType: EmbeddableSourceType;
+  sourceId: string;
+  similarity: number;
+};
+
+/**
+ * Entities whose chunks sit closest to any chunk of `sourceId`, as a self-join
+ * inside pgvector.
+ *
+ * Deliberately not "re-embed the note and search": the vectors are already
+ * stored, so this needs no model call at all — related notes keep working with
+ * Ollama switched off, unlike every other semantic path in the app. A note is
+ * scored by its single best-matching chunk rather than an average, so one
+ * strongly related paragraph in a long note still surfaces it.
+ */
+export async function findSimilarEntities(
+  userId: string,
+  sourceType: EmbeddableSourceType,
+  sourceId: string,
+  limit = 5,
+  targetTypes?: EmbeddableSourceType[],
+): Promise<SimilarEntity[]> {
+  const safeLimit = Math.min(Math.max(Math.trunc(limit), 1), MAX_SEARCH_LIMIT);
+  const typeFilter =
+    targetTypes && targetTypes.length > 0 ? targetTypes : EMBEDDABLE_SOURCE_TYPES.slice();
+
+  try {
+    return await prisma.$queryRaw<SimilarEntity[]>`
+      SELECT
+        other."sourceType",
+        other."sourceId",
+        MAX(1 - (other."embedding" <=> mine."embedding")) AS "similarity"
+      FROM "WorkspaceEmbedding" mine
+      JOIN "WorkspaceEmbedding" other
+        ON other."userId" = mine."userId"
+       AND other."embedding" IS NOT NULL
+       AND other."sourceType" = ANY(${typeFilter}::text[])
+       AND NOT (other."sourceType" = mine."sourceType" AND other."sourceId" = mine."sourceId")
+      WHERE mine."userId" = ${userId}
+        AND mine."sourceType" = ${sourceType}
+        AND mine."sourceId" = ${sourceId}
+        AND mine."embedding" IS NOT NULL
+      GROUP BY other."sourceType", other."sourceId"
+      ORDER BY "similarity" DESC
+      LIMIT ${safeLimit}`;
+  } catch (error) {
+    throw new AppError(
+      "VECTOR_SEARCH_FAILED",
+      "Finding related items failed.",
+      error,
+    );
+  }
+}

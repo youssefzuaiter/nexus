@@ -15,6 +15,7 @@ export type TaskInput = {
   dueDate: Date | null;
   estimatedMinutes: number;
   projectId: string | null;
+  courseId: string | null;
   scheduledStart: Date | null;
   scheduledEnd: Date | null;
   recurrenceId?: string | null;

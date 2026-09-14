@@ -13,6 +13,7 @@ export type NoteInput = {
   tags: string[];
   isFavorite: boolean;
   projectId: string | null;
+  courseId: string | null;
 };
 
 const EXCERPT_LENGTH = 160;
@@ -169,4 +170,57 @@ export async function listTags(userId: string): Promise<string[]> {
   return [...new Set(rows.flatMap((row) => row.tags))].sort((a, b) =>
     a.localeCompare(b),
   );
+}
+
+/** Snapshots taken before each save, newest first. */
+export async function listVersions(
+  userId: string,
+  noteId: string,
+  take = 20,
+): Promise<{ id: string; title: string; createdAt: Date; length: number }[]> {
+  const rows = await prisma.noteVersion.findMany({
+    where: { userId, noteId },
+    orderBy: { createdAt: "desc" },
+    select: { id: true, title: true, createdAt: true, content: true },
+    take,
+  });
+  return rows.map(({ content, ...row }) => ({ ...row, length: content.length }));
+}
+
+export async function getVersion(
+  userId: string,
+  versionId: string,
+): Promise<{ noteId: string; title: string; content: string } | null> {
+  return prisma.noteVersion.findFirst({
+    where: { id: versionId, userId },
+    select: { noteId: true, title: true, content: true },
+  });
+}
+
+/** Keeps the most recent `keep` snapshots of a note and drops the rest. */
+export async function snapshot(
+  userId: string,
+  note: Pick<Note, "id" | "title" | "content">,
+  keep = 20,
+): Promise<void> {
+  await prisma.noteVersion.create({
+    data: {
+      userId,
+      noteId: note.id,
+      title: note.title,
+      content: note.content,
+    },
+  });
+
+  const stale = await prisma.noteVersion.findMany({
+    where: { userId, noteId: note.id },
+    orderBy: { createdAt: "desc" },
+    skip: keep,
+    select: { id: true },
+  });
+  if (stale.length > 0) {
+    await prisma.noteVersion.deleteMany({
+      where: { id: { in: stale.map((row) => row.id) } },
+    });
+  }
 }

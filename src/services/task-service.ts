@@ -4,6 +4,7 @@ import { indexEntity, deleteEntityEmbeddings } from "@/lib/vector";
 import { AppError } from "@/lib/api-response";
 import * as taskRepository from "@/repositories/task-repository";
 import { assertProjectOwned, recalculateProgress } from "@/services/project-service";
+import { assertCourseOwned } from "@/services/course-service";
 import { generateOccurrences, type RecurrenceFrequency } from "@/lib/recurrence";
 import type { TaskInput, TaskStatus, TaskPriority } from "@/repositories/task-repository";
 import type { TaskModel as Task } from "@/generated/prisma/models";
@@ -130,6 +131,7 @@ export async function createTask(
   input: TaskInput,
 ): Promise<Task> {
   await assertProjectOwned(userId, input.projectId);
+  await assertCourseOwned(userId, input.courseId);
   const task = await taskRepository.createTask(userId, resolveSchedule(input));
   await syncTaskIndex(userId, task);
   await recalculateProgress(userId, task.projectId);
@@ -142,6 +144,7 @@ export async function updateTask(
   input: TaskInput,
 ): Promise<Task> {
   await assertProjectOwned(userId, input.projectId);
+  await assertCourseOwned(userId, input.courseId);
 
   const before = await taskRepository.getTask(userId, taskId);
   const task = await taskRepository.updateTask(userId, taskId, resolveSchedule(input));
@@ -285,6 +288,7 @@ export async function scheduleTask(
     description: existing.description,
     priority: existing.priority as TaskPriority,
     tags: existing.tags,
+    courseId: existing.courseId,
     dueDate: existing.dueDate,
     estimatedMinutes: existing.estimatedMinutes,
     projectId: existing.projectId,

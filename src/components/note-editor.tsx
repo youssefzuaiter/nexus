@@ -5,6 +5,7 @@ import { useFormStatus } from "react-dom";
 import type { ApiResponse } from "@/lib/api-response";
 import type { ProjectOption } from "@/lib/domain";
 import { ProjectSelect } from "@/components/project-select";
+import { CourseSelect, type CourseOption } from "@/components/course-select";
 
 type EditorAction<T> = (
   prevState: ApiResponse<T> | null,
@@ -15,12 +16,14 @@ type NoteEditorProps<T> = {
   action: EditorAction<T>;
   submitLabel: string;
   projects: ProjectOption[];
+  courses: CourseOption[];
   initial?: {
     title: string;
     content: string;
     tags: string[];
     isFavorite: boolean;
     projectId: string | null;
+    courseId: string | null;
   };
   onDelete?: () => Promise<void>;
 };
@@ -61,6 +64,7 @@ export function NoteEditor<T>({
   submitLabel,
   initial,
   projects,
+  courses,
   onDelete,
 }: NoteEditorProps<T>) {
   const [state, formAction] = useActionState(action, null);
@@ -109,6 +113,7 @@ export function NoteEditor<T>({
           </label>
 
           <ProjectSelect projects={projects} defaultValue={initial?.projectId} />
+          <CourseSelect courses={courses} defaultValue={initial?.courseId} />
         </div>
 
         {state && !state.success && (

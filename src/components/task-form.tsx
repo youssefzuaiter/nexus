@@ -5,6 +5,7 @@ import { useFormStatus } from "react-dom";
 import type { ApiResponse } from "@/lib/api-response";
 import type { TaskPriority, ProjectOption } from "@/lib/domain";
 import { ProjectSelect } from "@/components/project-select";
+import { CourseSelect, type CourseOption } from "@/components/course-select";
 
 type TaskAction = (
   prevState: ApiResponse<null> | null,
@@ -16,6 +17,7 @@ type TaskFormProps = {
   submitLabel: string;
   resetOnSuccess?: boolean;
   projects: ProjectOption[];
+  courses: CourseOption[];
   initial?: {
     title: string;
     description: string | null;
@@ -24,6 +26,7 @@ type TaskFormProps = {
     dueDate: string;
     estimatedMinutes: number;
     projectId: string | null;
+    courseId: string | null;
     scheduledStart: string;
     scheduledEnd: string;
   };
@@ -47,6 +50,7 @@ export function TaskForm({
   submitLabel,
   initial,
   projects,
+  courses,
   resetOnSuccess = false,
 }: TaskFormProps) {
   const [state, formAction] = useActionState(action, null);
@@ -129,6 +133,7 @@ export function TaskForm({
         </label>
 
         <ProjectSelect projects={projects} defaultValue={initial?.projectId} />
+        <CourseSelect courses={courses} defaultValue={initial?.courseId} />
       </div>
 
       {!initial && (

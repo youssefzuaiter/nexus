@@ -3,6 +3,7 @@ import { NoteEditor } from "@/components/note-editor";
 import { createNoteAction } from "@/actions/notes";
 import { requireUserId } from "@/lib/session";
 import { listProjectOptions } from "@/repositories/project-repository";
+import { listCourseOptions } from "@/repositories/course-repository";
 import { isTrackingEnabled } from "@/repositories/focus-repository";
 import { FocusTracker } from "@/components/focus-tracker";
 
@@ -15,8 +16,9 @@ export default async function NewNotePage({
   const userId = await requireUserId();
   const params = await searchParams;
   const presetTitle = typeof params.title === "string" ? params.title.slice(0, 200) : "";
-  const [projects, trackFocus] = await Promise.all([
+  const [projects, courses, trackFocus] = await Promise.all([
     listProjectOptions(userId),
+    listCourseOptions(userId),
     isTrackingEnabled(userId),
   ]);
 
@@ -38,12 +40,14 @@ export default async function NewNotePage({
         action={createNoteAction}
         submitLabel="Create note"
         projects={projects}
+        courses={courses}
         initial={{
           title: presetTitle,
           content: "",
           tags: [],
           isFavorite: false,
           projectId: null,
+          courseId: null,
         }}
       />
 

@@ -310,6 +310,7 @@ async function main() {
       tags: ["istanbul", "transport"],
       isFavorite: false,
       projectId: null,
+      courseId: null,
     });
 
     check(
@@ -333,6 +334,7 @@ async function main() {
       tags: ["istanbul"],
       isFavorite: true,
       projectId: null,
+      courseId: null,
     });
     const afterUpdate = await searchWorkspaceVectors(
       owner.id,
@@ -359,6 +361,7 @@ async function main() {
           tags: [],
           isFavorite: false,
           projectId: null,
+          courseId: null,
         }),
       ),
     );
@@ -437,6 +440,7 @@ async function main() {
       dueDate: new Date(2026, 5, 20, 23, 59, 59),
       estimatedMinutes: 120,
       projectId: null,
+      courseId: null,
       scheduledStart: null,
       scheduledEnd: null,
     });
@@ -490,6 +494,7 @@ async function main() {
           dueDate: null,
           estimatedMinutes: 5,
           projectId: null,
+          courseId: null,
           scheduledStart: null,
           scheduledEnd: null,
         }),
@@ -725,6 +730,7 @@ async function main() {
           dueDate: null,
           estimatedMinutes: 60,
           projectId: project.id,
+          courseId: null,
           scheduledStart: null,
           scheduledEnd: null,
         }),
@@ -769,6 +775,7 @@ async function main() {
       tags: [],
       isFavorite: false,
       projectId: project.id,
+      courseId: null,
     });
     const contents = await projectRepository.getProjectContents(owner.id, project.id);
     check("a note can be linked to a project", contents.notes.some((n) => n.id === projectNote.id));
@@ -805,6 +812,7 @@ async function main() {
           tags: [],
           isFavorite: false,
           projectId: intruderProject.id,
+          courseId: null,
         }),
       ),
     );
@@ -819,6 +827,7 @@ async function main() {
           dueDate: null,
           estimatedMinutes: 5,
           projectId: intruderProject.id,
+          courseId: null,
           scheduledStart: null,
           scheduledEnd: null,
         }),
@@ -892,6 +901,7 @@ async function main() {
         tags: [],
         dueDate: null,
         projectId: null,
+        courseId: null,
       };
 
       const unscheduled = await taskService.createTask(blockUser.id, {
@@ -1184,6 +1194,7 @@ async function main() {
           dueDate: new Date(2026, 8, 18, 23, 59, 59, 999),
           estimatedMinutes: 30,
           projectId: null,
+          courseId: null,
           scheduledStart: new Date(2026, 8, 18, 20, 0),
           scheduledEnd: new Date(2026, 8, 18, 20, 30),
         },
@@ -1213,6 +1224,7 @@ async function main() {
             dueDate: null,
             estimatedMinutes: 30,
             projectId: null,
+            courseId: null,
             scheduledStart: null,
             scheduledEnd: null,
           },
@@ -1349,6 +1361,7 @@ async function main() {
         tags: [],
         isFavorite: false,
         projectId: project.id,
+        courseId: null,
       });
       const task = await taskService.createTask(exportUser.id, {
         title: "Export task",
@@ -1358,6 +1371,7 @@ async function main() {
         dueDate: null,
         estimatedMinutes: 60,
         projectId: null,
+        courseId: null,
         scheduledStart: null,
         scheduledEnd: null,
       });
@@ -1367,6 +1381,7 @@ async function main() {
         tags: [],
         isFavorite: false,
         projectId: null,
+        courseId: null,
       });
       await noteService.deleteNote(exportUser.id, trashedNote.id);
 
@@ -1404,6 +1419,7 @@ async function main() {
           tags: [],
           isFavorite: false,
           projectId: null,
+          courseId: null,
         });
         const otherDump = await buildFullExport(otherUser.id);
         check(
@@ -1890,6 +1906,7 @@ async function main() {
           tags: [],
           isFavorite: false,
           projectId: null,
+          courseId: null,
         });
 
       const target = await mkNote("Thesis outline", "The plan for the dissertation.");
@@ -1931,6 +1948,7 @@ async function main() {
         tags: [],
         isFavorite: false,
         projectId: null,
+        courseId: null,
       });
       const afterEdit = await linkRepository.getOutgoingLinks(linkUser.id, source.id);
       check("removing a link deletes it", afterEdit.length === 1 && afterEdit[0].id === target.id, `${afterEdit.length}`);
@@ -1946,6 +1964,7 @@ async function main() {
         tags: [],
         isFavorite: false,
         projectId: null,
+        courseId: null,
       });
       check(
         "renaming a target breaks the stale link",
@@ -1986,6 +2005,7 @@ async function main() {
         tags: [],
         isFavorite: false,
         projectId: null,
+        courseId: null,
       });
       const crossTenant = await mkNote("Cross check", "referencing [[Dissertation outline]]");
       const crossLinks = await linkRepository.getOutgoingLinks(linkUser.id, crossTenant.id);
@@ -2014,6 +2034,7 @@ async function main() {
           tags: [],
           isFavorite: false,
           projectId: null,
+          courseId: null,
         });
 
       const a = await mkGraphNote("Graph A", "Links to [[Graph B]] and [[Graph C]].");
@@ -2058,6 +2079,7 @@ async function main() {
           tags: [],
           isFavorite: false,
           projectId: null,
+          courseId: null,
         });
         const otherGraph = await linkRepository.listGraph(otherGraphUser.id);
         check(
@@ -2099,6 +2121,7 @@ async function main() {
           dueDate: due,
           estimatedMinutes: 30,
           projectId: null,
+          courseId: null,
           scheduledStart: null,
           scheduledEnd: null,
         });
@@ -2188,6 +2211,7 @@ async function main() {
           tags: [],
           isFavorite: false,
           projectId: null,
+          courseId: null,
         });
       }
       const finished = await projectService.createProject(dashUser.id, {
@@ -2202,6 +2226,7 @@ async function main() {
         dueDate: null,
         estimatedMinutes: 10,
         projectId: finished.id,
+        courseId: null,
         scheduledStart: null,
         scheduledEnd: null,
       });
@@ -2247,6 +2272,7 @@ async function main() {
       tags: ["thesis"],
       isFavorite: false,
       projectId: null,
+      courseId: null,
     });
 
     const grounded = await assistantService.retrieveContext(
@@ -2322,6 +2348,7 @@ async function main() {
       tags: [],
       isFavorite: false,
       projectId: null,
+      courseId: null,
     });
 
     const forged = await assistantService.retrieveContext(
@@ -2368,6 +2395,7 @@ async function main() {
       tags: [],
       isFavorite: false,
       projectId: null,
+      courseId: null,
     });
 
     const exfilAttempt = await assistantService.retrieveContext(
@@ -2404,6 +2432,7 @@ async function main() {
         tags: [],
         isFavorite: false,
         projectId: null,
+        courseId: null,
       });
 
       let breaches = 0;

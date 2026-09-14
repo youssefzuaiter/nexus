@@ -14,6 +14,8 @@ const NAV_ITEMS: { href: string; label: string; hue: Hue }[] = [
   { href: "/tasks", label: "Tasks", hue: "rose" },
   { href: "/calendar", label: "Calendar", hue: "gold" },
   { href: "/projects", label: "Projects", hue: "green" },
+  { href: "/courses", label: "Courses", hue: "peach" },
+  { href: "/search", label: "Search", hue: "blue" },
   { href: "/review", label: "Review", hue: "green" },
   { href: "/cards", label: "Cards", hue: "gold" },
   { href: "/ai", label: "Assistant", hue: "peach" },
