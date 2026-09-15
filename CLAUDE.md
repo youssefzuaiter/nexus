@@ -417,6 +417,24 @@ even though quickSearch itself never produces one. `/search`'s type-filter
 chips are generated from `EMBEDDABLE_SOURCE_TYPES.map(...)`, so a "courses"
 chip appeared there for free.
 
+**`/courses/[id]` opens with an exam-prep summary strip**, folded into the
+existing page rather than a new route — the course hub already showed the
+raw ingredients (assessments, notes, tasks) but never the one thing worth
+seeing first: how worried to be about this course right now. `nextUngraded()`
+in `lib/grades.ts` picks the soonest assessment that is both undated-in-the-
+past and unscored — an assessment already graded is never proposed as
+something to study for even if its due date happens to sit in the future.
+`daysUntilLabel()` compares calendar dates, not exact timestamps, the same
+whole-day convention task buckets already use: a final due at 23:59 today
+reads "today" all day, not "in 1 day" just because it's currently 2pm.
+`flashcard-repository.ts`'s `countDueForCourse` joins through `Note` — a
+`Flashcard` has no `courseId` of its own, only an optional `noteId`.
+Verified against a real logged-in session rather than assumed from the
+component tree: a course with a graded midterm, an unscored final due in
+three days, and two due flashcards rendered "Final in 3 days · current
+average 78% · best possible 63% · 2 flashcards due" in the actual server
+response.
+
 ## Testing UI with Playwright
 
 Assert against `page.locator("main").innerText()`, **never `body.textContent`**.

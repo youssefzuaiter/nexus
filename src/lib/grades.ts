@@ -75,3 +75,30 @@ export function neededForTarget(
   const percent = ((target - summary.earned) / summary.remainingWeight) * 100;
   return { kind: "needed", target, percent };
 }
+
+export type UpcomingAssessment = {
+  title: string;
+  dueDate: Date | null;
+  score: number | null;
+};
+
+/**
+ * The soonest assessment still worth preparing for. An assessment already
+ * scored is not something to study for even if its due date happens to sit
+ * in the future, and one with no due date at all has nothing to count down
+ * to — both are excluded rather than sorted to the back.
+ */
+export function nextUngraded<T extends UpcomingAssessment>(
+  items: T[],
+  now: Date,
+): (T & { dueDate: Date }) | null {
+  const upcoming = items.filter(
+    (item): item is T & { dueDate: Date } =>
+      item.score === null && item.dueDate !== null && item.dueDate >= now,
+  );
+  if (upcoming.length === 0) return null;
+
+  return upcoming.reduce((soonest, item) =>
+    item.dueDate < soonest.dueDate ? item : soonest,
+  );
+}
