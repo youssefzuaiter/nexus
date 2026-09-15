@@ -23,12 +23,16 @@ const NAVIGATION: Command[] = [
   { id: "go-home", kind: "action", title: "Dashboard", detail: "Go to", href: "/" },
 ];
 
+// "course" is part of Command["kind"] only because it shares SearchHit's
+// type with the semantic /search page — quickSearch itself never returns it,
+// so this entry is dead in practice but keeps the Record exhaustive.
 const KIND_LABELS: Record<Command["kind"], string> = {
   action: "Go",
   note: "Note",
   task: "Task",
   event: "Event",
   project: "Project",
+  course: "Course",
 };
 
 const DEBOUNCE_MS = 150;

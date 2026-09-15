@@ -106,26 +106,34 @@ export async function createAssessment(
   return prisma.assessment.create({ data: { ...input, courseId, userId } });
 }
 
+/** Returns the updated row (rather than a bare boolean) so a caller that
+ *  needs to re-index the parent course knows its `courseId` without a
+ *  second read. */
 export async function updateAssessment(
   userId: string,
   assessmentId: string,
   input: Partial<AssessmentInput>,
-): Promise<boolean> {
+): Promise<Assessment | null> {
   const { count } = await prisma.assessment.updateMany({
     where: { id: assessmentId, userId },
     data: input,
   });
-  return count > 0;
+  if (count === 0) return null;
+  return prisma.assessment.findFirst({ where: { id: assessmentId, userId } });
 }
 
+/** Returns the row that was deleted, for the same reason `updateAssessment`
+ *  does — the caller needs its `courseId` to re-index the course. */
 export async function deleteAssessment(
   userId: string,
   assessmentId: string,
-): Promise<boolean> {
-  const { count } = await prisma.assessment.deleteMany({
+): Promise<Assessment | null> {
+  const row = await prisma.assessment.findFirst({
     where: { id: assessmentId, userId },
   });
-  return count > 0;
+  if (!row) return null;
+  await prisma.assessment.delete({ where: { id: row.id } });
+  return row;
 }
 
 /** Everything attached to a course, for its hub page. */

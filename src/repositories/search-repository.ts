@@ -1,9 +1,13 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
 
+// "course" is included for the semantic /search page and RelatedItems
+// (see EmbeddableSourceType in lib/vector.ts) — the literal command-palette
+// search below never emits it, since quickSearch stays scoped to the four
+// entity types it has always covered.
 export type SearchHit = {
   id: string;
-  kind: "note" | "task" | "event" | "project";
+  kind: "note" | "task" | "event" | "project" | "course";
   title: string;
   detail: string | null;
   href: string;

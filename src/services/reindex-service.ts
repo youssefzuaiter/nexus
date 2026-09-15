@@ -1,7 +1,11 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
 import { indexEntity } from "@/lib/vector";
-import { embeddableTextFor, projectTaskSummary } from "@/services/embeddable-text";
+import {
+  embeddableTextFor,
+  projectTaskSummary,
+  courseAssessmentSummary,
+} from "@/services/embeddable-text";
 
 export type ReindexReport = {
   indexed: number;
@@ -21,7 +25,7 @@ export type ReindexReport = {
 export async function reindexEverything(
   userId: string,
 ): Promise<ReindexReport> {
-  const [notes, tasks, events, projects] = await Promise.all([
+  const [notes, tasks, events, projects, courses] = await Promise.all([
     prisma.note.findMany({
       where: { userId, deletedAt: null },
       select: { id: true, title: true, content: true, tags: true },
@@ -52,12 +56,23 @@ export async function reindexEverything(
         },
       },
     }),
+    prisma.course.findMany({
+      where: { userId, deletedAt: null },
+      select: {
+        id: true, code: true, title: true, term: true,
+        // A course's embedded text includes a rundown of its assessments, so
+        // they come along rather than being fetched one course at a time.
+        assessments: {
+          select: { title: true, weight: true, score: true, maxScore: true, dueDate: true },
+        },
+      },
+    }),
   ]);
 
   const report: ReindexReport = {
     indexed: 0,
     failed: 0,
-    byType: { note: 0, task: 0, event: 0, project: 0 },
+    byType: { note: 0, task: 0, event: 0, project: 0, course: 0 },
   };
 
   const work = [
@@ -70,6 +85,14 @@ export async function reindexEverything(
           "project",
           row.id,
           embeddableTextFor.project(row, projectTaskSummary(row.tasks)),
+        ] as const,
+    ),
+    ...courses.map(
+      (row) =>
+        [
+          "course",
+          row.id,
+          embeddableTextFor.course(row, courseAssessmentSummary(row.assessments)),
         ] as const,
     ),
   ];
