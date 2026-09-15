@@ -836,29 +836,62 @@ prisma/migrations/           # Reviewable migration history
 ## Continuous integration
 
 `.github/workflows/ci.yml` runs on every push to `main` and every pull
-request, as two jobs rather than one:
+request, as three independent jobs rather than one:
 
 - **`checks`** — `prisma migrate deploy` against a real `pgvector/pgvector:pg17`
-  service container, then `tsc --noEmit`, `pnpm lint`, `pnpm build`, and
-  `pnpm test`. Nothing here calls Ollama — the unit suite is pure functions
-  only (chunking, grades, recurrence, ics, spaced repetition, pdf,
-  wiki-links) — so this tier is fast and has nothing environmental to flake
-  on. `pnpm lint` is included deliberately: "React 19 rejects synchronous
-  `setState` inside an effect body… `pnpm lint` catches this; `tsc` does
-  not" is already true of this codebase, so a CI setup that ran `tsc` alone
-  would have a real gap.
+  service container, then `pnpm build` (before `tsc`, not after — see
+  below), `tsc --noEmit`, `pnpm lint`, `pnpm test`, and `pnpm
+  test:integration`. Nothing here calls Ollama — the unit suite is pure
+  functions only (chunking, grades, recurrence, ics, spaced repetition, pdf,
+  wiki-links, attachment-store) and the integration suite is DB-only — so
+  this tier stays fast and has nothing environmental to flake on. `pnpm
+  lint` is included deliberately: "React 19 rejects synchronous `setState`
+  inside an effect body… `pnpm lint` catches this; `tsc` does not" is
+  already true of this codebase, so a CI setup that ran `tsc` alone would
+  have a real gap. **Build runs before the standalone `tsc`, not after** —
+  the first real CI run caught this: `next build` generates the ambient
+  `PageProps`/`LayoutProps` types into `.next/types`, which a bare `tsc` has
+  no other way to see on a fresh checkout with no prior `.next/` directory.
+  Same gotcha this file already documented for a stale local `.next/`, just
+  triggered by a missing one instead of a stale one.
+- **`test:integration`** (`tests/integration/isolation.test.ts`) exists
+  because five features — reminders, attachments, conversations, bulk note
+  actions, reindexing — shipped with zero tests in an earlier session, and
+  every *other* entity in this app already has a cross-tenant isolation
+  check in `tests/ai/evals.ts`. It's deliberately DB-only, no Ollama, so it
+  belongs in `checks` rather than the model-backed jobs. Writing it forced a
+  small refactor: `dueRemindersAction` used to hold its query logic inline
+  inside a `"use server"` action, which calls `requireUserId()` and so has
+  no request context to run outside a browser — unlike every other entity's
+  service function, it could not be called directly from a test.
+  `services/reminders-service.ts`'s `getDueReminders(userId, now)` is that
+  logic pulled out, taking `userId` explicitly like every other service
+  already does; the action is now the two-line wrapper it always should
+  have been.
 - **`e2e`** — installs and starts a real Ollama, pulls the two models the
   app actually uses (`OLLAMA_EMBEDDING_MODEL`/`OLLAMA_CHAT_MODEL`), then runs
   the full Playwright suite against the real dev server and a real Postgres.
   This is the same "trust the browser, not the typecheck" principle already
   applied by hand elsewhere in this project, now enforced on every push
   instead of only when someone remembers to run `pnpm test:e2e` themselves.
+- **`evals`** — `tests/ai/evals.ts`, this project's own dedicated AI-safety
+  benchmark (retrieval precision, multi-tenant isolation under a *compromised*
+  answer, prompt-injection structural defenses, tool-call validation — 300+
+  checks). It needs both models, since `answerQuestion`/`decideAction` call
+  the chat model, not just `embedQuery` — so it gets the same Ollama setup as
+  `e2e` rather than piggybacking on `checks`' bare Postgres. Split into its
+  own job (not folded into `e2e`) because the two don't depend on each other
+  and run in parallel — no reason to make one wait on the other.
 
-**Both jobs need `DATABASE_URL` pointed at the service container and dummy
-values for `NEXTAUTH_SECRET`/`OLLAMA_*`**, because `lib/config.ts` fails fast
-on any missing or malformed env var at import time — `checks` never actually
-talks to Ollama, but the URL still has to satisfy `z.string().url()` or the
-build itself refuses to start.
+**All three jobs need `DATABASE_URL` pointed at their own service container
+and dummy values for `NEXTAUTH_SECRET`/`OLLAMA_*`**, because `lib/config.ts`
+fails fast on any missing or malformed env var at import time — `checks`
+never actually talks to Ollama, but the URL still has to satisfy
+`z.string().url()` or the build itself refuses to start. The very first real
+run also caught a Postgres password mismatch between the workflow's
+`DATABASE_URL` and the service container's own `POSTGRES_PASSWORD` — a typo
+that `python3 -c "import yaml..."`-style syntax validation would never have
+caught, since the YAML was perfectly valid; only actually running it did.
 
 **Writing these tests is what found two real bugs, not just what verifies
 their absence.** `NoteBulkBar`'s success message (`"Tagged 2 notes."`) was

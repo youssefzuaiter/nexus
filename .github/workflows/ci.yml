@@ -25,6 +25,7 @@ jobs:
   # that should catch almost everything, almost immediately.
   checks:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     services:
       postgres:
         image: pgvector/pgvector:pg17
@@ -72,10 +73,17 @@ jobs:
         run: pnpm lint
 
       # Pure-function tests only (chunking, grades, recurrence, ics, spaced
-      # repetition, pdf, wiki-links) — nothing here touches Postgres or
-      # Ollama, so this tier stays fast and has nothing to flake on.
+      # repetition, pdf, wiki-links, attachment-store) — nothing here touches
+      # Postgres or Ollama, so this tier stays fast and has nothing to flake
+      # on.
       - name: Unit tests
         run: pnpm test
+
+      # Cross-tenant isolation for reminders/attachments/conversations/bulk
+      # actions/reindex — DB-only, no Ollama, so it stays in this fast job
+      # rather than the model-backed ones below.
+      - name: Integration tests (DB isolation)
+        run: pnpm test:integration
 
   # The slower, end-to-end tier: a real Postgres, a real Ollama, a real
   # browser driving the actual dev server — the same "trust the browser, not
@@ -84,6 +92,7 @@ jobs:
   # run it by hand.
   e2e:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     services:
       postgres:
         image: pgvector/pgvector:pg17
@@ -144,3 +153,62 @@ jobs:
             playwright-report/
             test-results/
           retention-days: 7
+
+  # tests/ai/evals.ts — retrieval precision, multi-tenant isolation under a
+  # compromised answer, tool-call validation, and the rest of this project's
+  # own dedicated AI-safety benchmark. It needs both models (embedQuery for
+  # retrieval, the chat model for answerQuestion/decideAction), so it gets
+  # the same Ollama setup as the e2e job rather than reusing checks' Postgres
+  # alone. Split into its own job so it can be watched and re-run separately
+  # from the (slower, browser-driven) e2e suite — the two don't depend on
+  # each other and run in parallel.
+  evals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: nexus
+          POSTGRES_PASSWORD: nexus_ci_password
+          POSTGRES_DB: nexus
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U nexus -d nexus"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.11.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Apply migrations
+        run: pnpm exec prisma migrate deploy
+
+      - name: Install and start Ollama
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          ollama serve &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:11434/api/version && break
+            sleep 2
+          done
+
+      - name: Pull the models the app actually uses
+        run: |
+          ollama pull "$OLLAMA_EMBEDDING_MODEL"
+          ollama pull "$OLLAMA_CHAT_MODEL"
+
+      - name: Run the AI evaluation suite
+        run: pnpm eval

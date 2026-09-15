@@ -14,6 +14,7 @@
     "eval": "tsx --conditions=react-server tests/ai/evals.ts",
     "postinstall": "prisma generate",
     "test": "tsx --conditions=react-server --test \"tests/unit/*.test.ts\"",
+    "test:integration": "tsx --conditions=react-server --test \"tests/integration/*.test.ts\"",
     "test:e2e": "playwright test"
   },
   "dependencies": {
