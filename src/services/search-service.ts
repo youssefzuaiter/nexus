@@ -31,7 +31,7 @@ async function resolve(
   userId: string,
   ids: Record<EmbeddableSourceType, string[]>,
 ): Promise<Map<string, SearchHit>> {
-  const [notes, tasks, events, projects] = await Promise.all([
+  const [notes, tasks, events, projects, courses] = await Promise.all([
     ids.note.length
       ? prisma.note.findMany({
           where: { userId, deletedAt: null, id: { in: ids.note } },
@@ -54,6 +54,12 @@ async function resolve(
       ? prisma.project.findMany({
           where: { userId, deletedAt: null, id: { in: ids.project } },
           select: { id: true, title: true, category: true, progress: true },
+        })
+      : [],
+    ids.course.length
+      ? prisma.course.findMany({
+          where: { userId, deletedAt: null, id: { in: ids.course } },
+          select: { id: true, code: true, title: true, term: true },
         })
       : [],
   ]);
@@ -103,12 +109,21 @@ async function resolve(
       href: `/projects/${project.id}`,
     });
   }
+  for (const course of courses) {
+    out.set(`course:${course.id}`, {
+      id: course.id,
+      kind: "course",
+      title: `${course.code} — ${course.title}`,
+      detail: course.term,
+      href: `/courses/${course.id}`,
+    });
+  }
 
   return out;
 }
 
 function emptyIds(): Record<EmbeddableSourceType, string[]> {
-  return { note: [], task: [], event: [], project: [] };
+  return { note: [], task: [], event: [], project: [], course: [] };
 }
 
 /**

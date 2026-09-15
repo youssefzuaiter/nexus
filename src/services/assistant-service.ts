@@ -40,7 +40,7 @@ const RELEVANCE_FLOOR = 0.55;
 const MAX_HISTORY_TURNS = 6;
 const EXCERPT_LENGTH = 220;
 
-const SYSTEM_PROMPT = `You are Nexus, a personal knowledge assistant. You answer questions about the user's own notes, tasks, events and projects.
+const SYSTEM_PROMPT = `You are Nexus, a personal knowledge assistant. You answer questions about the user's own notes, tasks, events, projects and courses (including their assessments and grades).
 
 Rules you must always follow:
 1. Answer only from the numbered workspace excerpts provided in the user message. Do not use outside knowledge to state facts about the user's workspace.
@@ -201,6 +201,14 @@ async function resolveTitles(
       select: { id: true, title: true },
     });
     return new Map(rows.map((row) => [row.id, row.title]));
+  }
+
+  if (sourceType === "course") {
+    const rows = await prisma.course.findMany({
+      where: { userId, id: { in: ids }, deletedAt: null },
+      select: { id: true, code: true, title: true },
+    });
+    return new Map(rows.map((row) => [row.id, `${row.code} — ${row.title}`]));
   }
 
   return new Map();

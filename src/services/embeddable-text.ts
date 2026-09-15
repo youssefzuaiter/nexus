@@ -1,3 +1,5 @@
+import { summarise } from "@/lib/grades";
+
 /**
  * How each entity is phrased for the embedding model, in one place.
  *
@@ -48,6 +50,16 @@ type EventShape = {
 
 type ProjectShape = { title: string; category: string; progress: number };
 
+type CourseShape = { code: string; title: string; term: string };
+
+type CourseAssessmentShape = {
+  title: string;
+  weight: number;
+  score: number | null;
+  maxScore: number;
+  dueDate: Date | null;
+};
+
 export const embeddableTextFor = {
   note(note: NoteShape): string {
     const tagLine = note.tags.length > 0 ? `Tags: ${note.tags.join(", ")}` : "";
@@ -87,6 +99,10 @@ export const embeddableTextFor = {
   project(project: ProjectShape, taskSummary: string): string {
     return `${project.title}. This is a ${project.category.toLowerCase()} project, ${project.progress}% complete. ${taskSummary}`;
   },
+
+  course(course: CourseShape, assessmentSummary: string): string {
+    return `${course.code} — ${course.title}. This is a course from the ${course.term} term. ${assessmentSummary}`;
+  },
 };
 
 /** The task rundown appended to a project's embedded text. */
@@ -97,4 +113,35 @@ export function projectTaskSummary(
   return `Its tasks are: ${tasks
     .map((task) => `${task.title}${task.status === "done" ? " (done)" : ""}`)
     .join("; ")}.`;
+}
+
+/**
+ * The assessment rundown appended to a course's embedded text — the same role
+ * `projectTaskSummary` plays for projects. Reuses `summarise()` from
+ * `lib/grades.ts` rather than restating the arithmetic, so a question like
+ * "what's my grade in X" and the grade panel's own numbers can never disagree.
+ */
+export function courseAssessmentSummary(
+  assessments: CourseAssessmentShape[],
+): string {
+  if (assessments.length === 0) return "It has no assessments recorded yet.";
+
+  const items = assessments.map((assessment) => {
+    const due = assessment.dueDate
+      ? `, due ${DATE_FORMAT.format(assessment.dueDate)}`
+      : "";
+    const graded =
+      assessment.score === null
+        ? ", not yet graded"
+        : `, scored ${assessment.score}/${assessment.maxScore}`;
+    return `${assessment.title} (worth ${assessment.weight}% of the course${due}${graded})`;
+  });
+
+  const summary = summarise(assessments);
+  const gradeLine =
+    summary.currentAverage === null
+      ? " Nothing has been graded yet."
+      : ` The current average across graded work is ${Math.round(summary.currentAverage)}%, and the best possible final mark, if everything remaining is scored perfectly, is ${Math.round(summary.bestPossible)}%.`;
+
+  return `Its assessments are: ${items.join("; ")}.${gradeLine}`;
 }

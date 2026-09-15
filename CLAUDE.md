@@ -370,6 +370,53 @@ each mutation (`setAssessmentScoreAction`, add, delete) is followed by
 `router.refresh()`; without it the panel kept showing the pre-edit numbers
 until some unrelated navigation forced a re-render.
 
+**Courses are part of the semantic index — they were not until now.**
+`"course"` was missing from `EMBEDDABLE_SOURCE_TYPES` entirely, so despite
+"everything is connected" being the whole point of this app, asking the
+assistant "what's my grade in CMP2003" or "when's my next exam" failed even
+though the answer lived one page away, because the RAG index simply never
+saw a `Course` or `Assessment` row. Fixed the same way `/notes/import` was
+kept small: reuse the existing entity-to-prose/index/citation machinery
+rather than inventing a parallel path for a fifth type.
+
+A course is indexed as **one** embedding covering the course plus a rundown
+of its assessments — `embeddableTextFor.course()` +
+`courseAssessmentSummary()` in `embeddable-text.ts` — the same shape a
+project's embedded text folds in a task rundown rather than indexing each
+task separately. `courseAssessmentSummary` calls `summarise()` from
+`lib/grades.ts` rather than restating the percentage arithmetic, so the
+assistant's answer and the grade panel's own numbers can never disagree.
+Verified end to end against the real DB and Ollama (not asserted from
+reading the code): a course with a graded midterm and an ungraded final
+retrieved at 0.72 similarity for "what is my current grade", 0.65 for
+"when is my next exam" — both comfortably above the 0.55 `RELEVANCE_FLOOR` —
+with the embedded prose correctly reporting a 78% current average and a 63%
+best-possible mark.
+
+`indexCourse()` lives in `course-service.ts`, following `syncNoteIndex`'s
+shape, and is called from `actions/courses.ts` after every mutation that
+changes what a course's prose says: creating the course, and creating,
+scoring or deleting an assessment (not editing a course's own fields — there
+is no edit-course action in this app to call it from). Adding or scoring an
+assessment re-indexes the *course*, not a new "assessment" entity, since the
+assessment doesn't have its own citable page. Deleting or scoring an
+assessment only had an id to work with, so `updateAssessment` and
+`deleteAssessment` in `course-repository.ts` now return the affected row
+instead of a bare boolean — the same reason `deleteAttachmentRow` returns a
+row — purely so the caller has the `courseId` to re-index without a second
+read. Soft-deleting a course calls `deleteEntityEmbeddings` directly from the
+action, since courses have no service-layer delete function of their own.
+
+Widening `EmbeddableSourceType` to include `"course"` is one array entry in
+`lib/vector.ts`, but `SearchHit["kind"]` in `search-repository.ts` is shared
+between that (the semantic `/search` page and `RelatedItems`, which now
+surface courses) and the command palette's literal `quickSearch`, which
+deliberately still does **not** search courses — so `Record<Command["kind"],
+string>` in `command-palette.tsx` needed a `course` entry to stay exhaustive
+even though quickSearch itself never produces one. `/search`'s type-filter
+chips are generated from `EMBEDDABLE_SOURCE_TYPES.map(...)`, so a "courses"
+chip appeared there for free.
+
 ## Testing UI with Playwright
 
 Assert against `page.locator("main").innerText()`, **never `body.textContent`**.

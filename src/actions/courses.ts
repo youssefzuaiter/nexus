@@ -6,7 +6,9 @@ import { redirect } from "next/navigation";
 import { requireUserId } from "@/lib/session";
 import { type ApiResponse, ok, fail, toApiResponse } from "@/lib/api-response";
 import { prisma } from "@/lib/prisma";
+import { deleteEntityEmbeddings } from "@/lib/vector";
 import * as courseRepository from "@/repositories/course-repository";
+import { indexCourse } from "@/services/course-service";
 
 const emptyToNull = (value: unknown) =>
   typeof value === "string" && value.trim() === "" ? null : value;
@@ -58,7 +60,8 @@ export async function createCourseAction(
 
   try {
     const userId = await requireUserId();
-    await courseRepository.createCourse(userId, parsed.data);
+    const course = await courseRepository.createCourse(userId, parsed.data);
+    await indexCourse(userId, course.id);
   } catch (error) {
     return toApiResponse(error);
   }
@@ -97,6 +100,7 @@ export async function addAssessmentAction(
       ...parsed.data,
       dueDate: parsed.data.dueDate ? endOfLocalDay(parsed.data.dueDate) : null,
     });
+    await indexCourse(userId, parsedId.data);
   } catch (error) {
     return toApiResponse(error);
   }
@@ -129,6 +133,7 @@ export async function setAssessmentScoreAction(
       { score: parsed.data.score },
     );
     if (!updated) return fail("RESOURCE_NOT_FOUND", "That assessment is gone.");
+    await indexCourse(userId, updated.courseId);
   } catch (error) {
     return toApiResponse(error);
   }
@@ -145,7 +150,8 @@ export async function deleteAssessmentAction(
 
   try {
     const userId = await requireUserId();
-    await courseRepository.deleteAssessment(userId, parsed.data);
+    const deleted = await courseRepository.deleteAssessment(userId, parsed.data);
+    if (deleted) await indexCourse(userId, deleted.courseId);
   } catch (error) {
     return toApiResponse(error);
   }
@@ -200,6 +206,7 @@ export async function deleteCourseAction(courseId: string): Promise<void> {
     }),
   ]);
   await courseRepository.softDeleteCourse(userId, parsed.data);
+  await deleteEntityEmbeddings(userId, "course", parsed.data);
 
   revalidatePath("/courses");
   revalidatePath("/");
