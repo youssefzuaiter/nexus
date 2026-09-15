@@ -81,7 +81,7 @@ export function AuthForm({
           name="name"
           type="text"
           autoComplete="name"
-          placeholder="Youssef Zuaiter"
+          placeholder="Your name"
         />
       )}
       <Field

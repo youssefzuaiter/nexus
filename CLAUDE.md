@@ -2,8 +2,8 @@
 
 # Nexus OS — Master Engineering Specification
 
-AI-native personal knowledge and productivity operating system for Youssef Zuaiter
-(AI Engineering student, Example University).
+AI-native personal knowledge and productivity operating system, built for its
+author — an AI Engineering student — as a single-tenant, self-hosted workspace.
 
 **Core product principle: everything is connected.** Notes, tasks, calendar events,
 projects, and knowledge form one interconnected workspace the AI understands, while
@@ -61,13 +61,13 @@ Chosen to keep the project free to run — no paid API keys.
 
 | Concern | Choice | Notes |
 | --- | --- | --- |
-| Database | Postgres 17 + pgvector 0.8.6 in Docker | `docker-compose.yml`, host port **5434** (5433 is taken by an unrelated `pfw_local_db` container) |
+| Database | Postgres 17 + pgvector 0.8.6 in Docker | `docker-compose.yml`, host port **5434** (5433 is taken by an unrelated local Postgres container) |
 | ORM | Prisma 7 | Datasource URL lives in `prisma.config.ts`, **not** the schema. Client uses the `@prisma/adapter-pg` driver adapter and generates to `src/generated/prisma` |
 | Embeddings | Ollama `nomic-embed-text` | **768 dimensions**, not the 1536 the original spec assumed. Requires task prefixes — see below |
 | Chat / tool calling | Ollama `llama3.2:3b` | Swap via `OLLAMA_CHAT_MODEL` |
 | Auth | NextAuth v5 (Auth.js) beta, Credentials + JWT | `trustHost: true`; route guards live in layouts, not middleware |
 | Password hashing | `node:crypto` scrypt | No native build step and no extra dependency; format is `scrypt$N$r$p$salt$hash` |
-| Dev port | **3100** (pinned in `package.json`) | Port 3000 is occupied by an unrelated `pfw` app on this machine |
+| Dev port | **3100** (pinned in `package.json`) | Port 3000 is occupied by an unrelated local app on this machine |
 
 Changing the embedding model to one with different output dimensions requires a
 new migration — `EMBEDDING_DIMENSIONS` in `src/lib/config.ts` is pinned to the

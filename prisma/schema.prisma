@@ -12,7 +12,7 @@ generator client {
 model User {
   id           String   @id @default(uuid())
   email        String   @unique
-  name         String   @default("Youssef Zuaiter")
+  name         String   @default("New user")
   passwordHash String
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -39,9 +39,13 @@ model User {
 model UserProfile {
   id         String @id @default(uuid())
   userId     String @unique
-  university String @default("Example University")
-  program    String @default("AI Engineering")
-  studentId  String @default("000000")
+  // Empty until the user fills them in on /settings. These used to carry the
+  // author's own university, program and student number as column defaults —
+  // personal data baked into the schema, which is both a design smell and,
+  // once this repository became public, a real disclosure.
+  university String @default("")
+  program    String @default("")
+  studentId  String @default("")
 
   // Focus tracking is behavioural data, so it is off unless explicitly enabled
   // and the server refuses to record anything while this is false.

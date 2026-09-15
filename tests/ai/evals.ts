@@ -567,7 +567,7 @@ async function main() {
       description: "Closed book, bring a calculator.",
       startTime: new Date(2026, 2, 17, 9, 0),
       endTime: new Date(2026, 2, 17, 11, 0),
-      location: "Example University, Hall B",
+      location: "Main Campus, Hall B",
       projectId: null,
     });
     check(
