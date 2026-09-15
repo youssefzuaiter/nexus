@@ -143,6 +143,137 @@ test("a course computes what is needed on the remaining work", async ({
   expect(await mainText(page)).toContain("72.0%");
 });
 
+test("a task due today appears under Due now on the dashboard", async ({
+  page,
+}) => {
+  const title = `Submit assignment ${Date.now()}`;
+  const today = new Date().toISOString().slice(0, 10);
+
+  await page.goto("/tasks");
+  await page.fill('input[name="title"]', title);
+  await page.fill('input[name="dueDate"]', today);
+  await main(page).getByRole("button", { name: /add task|create task/i }).click();
+  await expect(main(page)).toContainText(title);
+
+  // Reminders is a client component that polls on mount, so no reload is
+  // needed — but it does need a moment for that first fetch to resolve.
+  await page.goto("/");
+  await expect(main(page).getByText(/due now/i)).toBeVisible();
+  await expect(main(page)).toContainText(title);
+});
+
+test("a file can be attached to a note and removed again", async ({
+  page,
+}) => {
+  const title = `Lecture slides ${Date.now()}`;
+
+  await page.goto("/notes/new");
+  await page.fill('input[name="title"]', title);
+  await page.fill('textarea[name="content"]', "See attached slides.");
+  await main(page).getByRole("button", { name: /create note/i }).click();
+  await page.waitForURL(/\/notes\/[0-9a-f-]{36}$/);
+
+  await page
+    .getByLabel("File to attach")
+    .setInputFiles({
+      name: "slides.txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from("Week 3: recursion and induction."),
+    });
+  await main(page).getByRole("button", { name: /^attach$/i }).click();
+
+  const row = main(page).getByRole("listitem").filter({ hasText: "slides.txt" });
+  await expect(row).toBeVisible();
+
+  page.once("dialog", (dialog) => dialog.accept());
+  await row.getByRole("button", { name: /remove/i }).click();
+  await expect(main(page)).not.toContainText("slides.txt");
+});
+
+test("selected notes can be bulk-tagged, then bulk-deleted", async ({
+  page,
+}) => {
+  const stamp = Date.now();
+  const titleA = `Bulk A ${stamp}`;
+  const titleB = `Bulk B ${stamp}`;
+  const tag = `bulk-${stamp}`;
+
+  for (const title of [titleA, titleB]) {
+    await page.goto("/notes/new");
+    await page.fill('input[name="title"]', title);
+    await page.fill('textarea[name="content"]', "Note content.");
+    await main(page).getByRole("button", { name: /create note/i }).click();
+    await page.waitForURL(/\/notes\/[0-9a-f-]{36}$/);
+  }
+
+  await page.goto("/notes");
+  await page.getByLabel(`Select ${titleA}`).check();
+  await page.getByLabel(`Select ${titleB}`).check();
+
+  await page.getByLabel("Tag to add").fill(tag);
+  await main(page).getByRole("button", { name: /^tag$/i }).click();
+  await expect(main(page)).toContainText(/tagged 2 notes/i);
+
+  await page.goto(`/notes?tag=${tag}`);
+  await expect(main(page)).toContainText(titleA);
+  await expect(main(page)).toContainText(titleB);
+
+  await page.getByLabel(`Select ${titleA}`).check();
+  page.once("dialog", (dialog) => dialog.accept());
+  await main(page).getByRole("button", { name: /^delete$/i }).click();
+  await expect(main(page)).toContainText(/moved 1 note/i);
+
+  await page.reload();
+  expect(await mainText(page)).not.toContain(titleA.toLowerCase());
+  expect(await mainText(page)).toContain(titleB.toLowerCase());
+});
+
+test("rebuilding the search index reports how many items were indexed", async ({
+  page,
+}) => {
+  await page.goto("/settings");
+  await main(page).getByRole("button", { name: /rebuild search index/i }).click();
+  await expect(main(page)).toContainText(/rebuilt \d+ items/i, {
+    timeout: 30_000,
+  });
+});
+
+test("an assistant thread is saved and survives a reload", async ({
+  page,
+}) => {
+  // Local CPU inference is slow, and CI (a shared, GPU-less runner) is
+  // slower again — the default per-test timeout (60s, playwright.config.ts)
+  // is tuned for everything else in this file, not for local model inference.
+  test.setTimeout(process.env.CI ? 180_000 : 90_000);
+
+  const question = `What tags do my tasks have, as of ${Date.now()}?`;
+
+  await page.goto("/ai");
+  await page.getByLabel("Ask your workspace").fill(question);
+  await main(page).getByRole("button", { name: /^ask$/i }).click();
+
+  // Sending clears the input, so the "Ask" button going back to enabled is
+  // not a signal of anything — it's disabled again purely because the input
+  // is now empty. The thread appearing in the sidebar only happens after the
+  // full round trip (streaming finished, then the route's own finally block
+  // persists the answer and the client calls router.refresh()), so it's the
+  // right thing to wait on, and it's what's actually under test here — not
+  // the model's wording.
+  const thread = main(page).getByRole("link", { name: new RegExp(question.slice(0, 30)) });
+  await expect(thread).toBeVisible({
+    timeout: process.env.CI ? 170_000 : 60_000,
+  });
+  const threadHref = await thread.getAttribute("href");
+
+  await page.goto("/ai");
+  await expect(
+    main(page).getByRole("link", { name: new RegExp(question.slice(0, 30)) }),
+  ).toBeVisible();
+
+  await page.goto(threadHref!);
+  await expect(main(page)).toContainText(question);
+});
+
 test("navigation reaches every section", async ({ page }) => {
   for (const [path, heading] of [
     ["/search", /search/i],

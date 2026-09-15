@@ -1,0 +1,141 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Real Postgres URL (points at the service container below); the rest are
+  # dummy values that only need to satisfy lib/config.ts's format validation
+  # — the checks job never actually talks to Ollama.
+  DATABASE_URL: postgresql://nexus:nexus_ci_password@localhost:5432/nexus
+  NEXTAUTH_SECRET: ci-only-secret-never-used-outside-this-workflow-run
+  OLLAMA_BASE_URL: http://localhost:11434
+  OLLAMA_CHAT_MODEL: llama3.2:3b
+  OLLAMA_EMBEDDING_MODEL: nomic-embed-text
+
+jobs:
+  # Fast, deterministic checks with no LLM in the loop — this is the tier
+  # that should catch almost everything, almost immediately.
+  checks:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: nexus
+          POSTGRES_PASSWORD: ci_password
+          POSTGRES_DB: nexus
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U nexus -d nexus"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.11.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Apply migrations
+        run: pnpm exec prisma migrate deploy
+
+      - name: Type-check
+        run: pnpm tsc --noEmit
+
+      - name: Lint
+        run: pnpm lint
+
+      # Also verifies migrations actually match what Prisma's client expects.
+      - name: Build
+        run: pnpm build
+
+      # Pure-function tests only (chunking, grades, recurrence, ics, spaced
+      # repetition, pdf, wiki-links) — nothing here touches Postgres or
+      # Ollama, so this tier stays fast and has nothing to flake on.
+      - name: Unit tests
+        run: pnpm test
+
+  # The slower, end-to-end tier: a real Postgres, a real Ollama, a real
+  # browser driving the actual dev server — the same "trust the browser, not
+  # the typecheck" principle this project's own CLAUDE.md holds itself to,
+  # now enforced on every push instead of only when someone remembers to
+  # run it by hand.
+  e2e:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: nexus
+          POSTGRES_PASSWORD: ci_password
+          POSTGRES_DB: nexus
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U nexus -d nexus"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.11.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Apply migrations
+        run: pnpm exec prisma migrate deploy
+
+      - name: Install Playwright's browser
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Install and start Ollama
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          ollama serve &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:11434/api/version && break
+            sleep 2
+          done
+
+      - name: Pull the models the app actually uses
+        run: |
+          ollama pull "$OLLAMA_EMBEDDING_MODEL"
+          ollama pull "$OLLAMA_CHAT_MODEL"
+
+      - name: Run the e2e suite against a real server, DB and model
+        run: pnpm test:e2e
+
+      - name: Upload the Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
