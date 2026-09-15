@@ -883,6 +883,31 @@ request, as three independent jobs rather than one:
   own job (not folded into `e2e`) because the two don't depend on each other
   and run in parallel — no reason to make one wait on the other.
 
+### CI is a gate, not just an alarm
+
+`main` is protected: `checks`, `e2e` and `evals` are **required status
+checks**, pull requests are required, and force-pushes and branch deletion
+are refused. Admin bypass is deliberately left **on**, so the repo owner can
+still push directly in a genuine emergency — the gate is there to stop
+accidents, not to lock its only maintainer out of his own project.
+
+**This is why the repository is public.** Both server-side enforcement
+mechanisms GitHub offers — classic branch protection and the newer
+rulesets — return `403 Upgrade to GitHub Pro or make this repository public`
+on a private repo on the free plan. The choice was: pay for Pro, publish the
+code, or leave CI as an advisory alarm that nothing enforces. Publishing was
+the only option that is both free and a real gate, and the history was
+checked before flipping it — `.env*` has always been gitignored, only
+`.env.example` (a local Docker password and a placeholder) was ever
+committed, and no attachment data or secret-shaped strings appear anywhere
+in the full history. **Anything genuinely secret must therefore never be
+committed here, not even in a commit later reverted** — a public repo
+exposes every commit ever made, not just the current tree.
+
+**Required-check names must match the job ids in `ci.yml`** (`checks`,
+`e2e`, `evals`). Renaming a job without updating the protection rule leaves
+the branch waiting forever on a check that will never report.
+
 **All three jobs need `DATABASE_URL` pointed at their own service container
 and dummy values for `NEXTAUTH_SECRET`/`OLLAMA_*`**, because `lib/config.ts`
 fails fast on any missing or malformed env var at import time — `checks`
