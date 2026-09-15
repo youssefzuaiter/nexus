@@ -46,8 +46,10 @@ export function freeIntervals(day: Date, busy: Busy[], now: Date): Busy[] {
   const dayStart = atHour(day, DAY_START_HOUR);
   const dayEnd = atHour(day, DAY_END_HOUR);
 
-  // Never plan into time that has already passed.
-  const from = now > dayStart && now < dayEnd ? new Date(now) : dayStart;
+  // Never plan into time that has already passed. Clamping only the lower
+  // bound matters: an `&& now < dayEnd` here would fall back to dayStart once
+  // the day was over, and happily propose this morning's 09:00 at 23:00.
+  const from = now > dayStart ? new Date(now) : dayStart;
   if (from >= dayEnd) return [];
 
   const sorted = [...busy]

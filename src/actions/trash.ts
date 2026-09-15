@@ -7,9 +7,7 @@ import { type ApiResponse, ok, fail, toApiResponse } from "@/lib/api-response";
 import * as noteService from "@/services/note-service";
 import * as taskService from "@/services/task-service";
 import * as projectService from "@/services/project-service";
-
-export const TRASH_KINDS = ["note", "task", "project"] as const;
-export type TrashKind = (typeof TRASH_KINDS)[number];
+import { TRASH_KINDS, type TrashKind } from "@/lib/domain";
 
 const targetSchema = z.object({
   kind: z.enum(TRASH_KINDS),

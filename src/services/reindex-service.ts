@@ -1,0 +1,89 @@
+import "server-only";
+import { prisma } from "@/lib/prisma";
+import { indexEntity } from "@/lib/vector";
+import { embeddableTextFor, projectTaskSummary } from "@/services/embeddable-text";
+
+export type ReindexReport = {
+  indexed: number;
+  failed: number;
+  byType: Record<string, number>;
+};
+
+/**
+ * Rebuilds the vector index for everything the user owns.
+ *
+ * Needed because indexing is best-effort at write time: a save made while
+ * Ollama was stopped succeeds, drops its stale embeddings, and leaves that
+ * entity invisible to semantic search until it is saved again. Before this
+ * there was no way to notice or repair that — and bulk Markdown import makes
+ * it easy to create hundreds of such notes in one go.
+ */
+export async function reindexEverything(
+  userId: string,
+): Promise<ReindexReport> {
+  const [notes, tasks, events, projects] = await Promise.all([
+    prisma.note.findMany({
+      where: { userId, deletedAt: null },
+      select: { id: true, title: true, content: true, tags: true },
+    }),
+    prisma.task.findMany({
+      where: { userId, deletedAt: null },
+      select: {
+        id: true, title: true, description: true, status: true,
+        priority: true, dueDate: true, estimatedMinutes: true, tags: true,
+      },
+    }),
+    prisma.event.findMany({
+      where: { userId },
+      select: {
+        id: true, title: true, description: true, startTime: true,
+        endTime: true, location: true,
+      },
+    }),
+    prisma.project.findMany({
+      where: { userId, deletedAt: null },
+      select: {
+        id: true, title: true, category: true, progress: true,
+        // A project's embedded text includes a rundown of its tasks, so they
+        // come along rather than being fetched one project at a time.
+        tasks: {
+          where: { deletedAt: null },
+          select: { title: true, status: true },
+        },
+      },
+    }),
+  ]);
+
+  const report: ReindexReport = {
+    indexed: 0,
+    failed: 0,
+    byType: { note: 0, task: 0, event: 0, project: 0 },
+  };
+
+  const work = [
+    ...notes.map((row) => ["note", row.id, embeddableTextFor.note(row)] as const),
+    ...tasks.map((row) => ["task", row.id, embeddableTextFor.task(row)] as const),
+    ...events.map((row) => ["event", row.id, embeddableTextFor.event(row)] as const),
+    ...projects.map(
+      (row) =>
+        [
+          "project",
+          row.id,
+          embeddableTextFor.project(row, projectTaskSummary(row.tasks)),
+        ] as const,
+    ),
+  ];
+
+  for (const [type, id, text] of work) {
+    try {
+      await indexEntity(userId, type, id, text);
+      report.indexed++;
+      report.byType[type]++;
+    } catch {
+      // One unembeddable row must not abandon the rest of the rebuild.
+      report.failed++;
+    }
+  }
+
+  return report;
+}

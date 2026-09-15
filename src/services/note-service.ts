@@ -11,6 +11,7 @@ import * as noteRepository from "@/repositories/note-repository";
 import { assertProjectOwned } from "@/services/project-service";
 import { assertCourseOwned } from "@/services/course-service";
 import { parseWikiLinks } from "@/lib/wiki-links";
+import { embeddableTextFor } from "@/services/embeddable-text";
 import * as linkRepository from "@/repositories/link-repository";
 import type { NoteInput, NoteSummary } from "@/repositories/note-repository";
 import type { NoteModel as Note } from "@/generated/prisma/models";
@@ -20,10 +21,7 @@ export type NoteSearchResult = {
   notes: NoteSummary[];
 };
 
-function embeddableText(note: Pick<Note, "title" | "content" | "tags">): string {
-  const tagLine = note.tags.length > 0 ? `Tags: ${note.tags.join(", ")}` : "";
-  return [note.title, tagLine, note.content].filter(Boolean).join("\n\n");
-}
+
 
 /**
  * Keeps the note's vector index in step with its content. A note must never be
@@ -33,7 +31,7 @@ function embeddableText(note: Pick<Note, "title" | "content" | "tags">): string 
  */
 async function syncNoteIndex(userId: string, note: Note): Promise<void> {
   try {
-    await indexEntity(userId, "note", note.id, embeddableText(note));
+    await indexEntity(userId, "note", note.id, embeddableTextFor.note(note));
   } catch (error) {
     console.error(`[WARN] Failed to index note ${note.id}:`, error);
     await deleteEntityEmbeddings(userId, "note", note.id).catch(() => {});

@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import type { Citation } from "@/services/assistant-service";
 import type { ActionProposal } from "@/lib/ai-tools";
 import { ProposalCard } from "@/components/proposal-card";
@@ -54,11 +55,21 @@ function CitationList({ citations }: { citations: Citation[] }) {
   );
 }
 
-export function AssistantChat() {
-  const [turns, setTurns] = useState<Turn[]>([]);
+export function AssistantChat({
+  conversationId: initialConversationId = null,
+  initialTurns = [],
+}: {
+  conversationId?: string | null;
+  initialTurns?: Turn[];
+} = {}) {
+  const [turns, setTurns] = useState<Turn[]>(initialTurns);
+  const [conversationId, setConversationId] = useState<string | null>(
+    initialConversationId,
+  );
   const [question, setQuestion] = useState("");
   const [busy, setBusy] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const router = useRouter();
 
   async function ask(raw: string) {
     const trimmed = raw.trim();
@@ -76,6 +87,9 @@ export function AssistantChat() {
       { role: "assistant", content: "" },
     ]);
 
+    // Declared out here because the finally block reads it.
+    let startedThread: string | null = null;
+
     const updateLast = (patch: Partial<Turn>) =>
       setTurns((prev) => {
         const next = [...prev];
@@ -87,7 +101,7 @@ export function AssistantChat() {
       const response = await fetch("/api/ai/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: trimmed, history }),
+        body: JSON.stringify({ question: trimmed, history, conversationId }),
       });
 
       if (!response.ok || !response.body) {
@@ -116,7 +130,12 @@ export function AssistantChat() {
           if (!line.trim()) continue;
           const event = JSON.parse(line);
 
-          if (event.type === "citations") {
+          if (event.type === "conversation") {
+            // The server opened a thread for this question; later turns carry
+            // its id so they land in the same one.
+            setConversationId(event.id);
+            startedThread = event.id;
+          } else if (event.type === "citations") {
             updateLast({ citations: event.citations });
           } else if (event.type === "delta") {
             answer += event.text;
@@ -141,6 +160,8 @@ export function AssistantChat() {
       updateLast({ error: "Lost connection to the assistant." });
     } finally {
       setBusy(false);
+      // A newly opened thread should appear in the list beside the chat.
+      if (startedThread) router.refresh();
     }
   }
 

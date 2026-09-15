@@ -31,6 +31,9 @@ model User {
   courses     Course[]
   assessments Assessment[]
   noteVersions NoteVersion[]
+  conversations Conversation[]
+  messages     Message[]
+  attachments  Attachment[]
 }
 
 model UserProfile {
@@ -81,9 +84,10 @@ model Note {
   user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   project    Project?      @relation(fields: [projectId], references: [id], onDelete: SetNull)
   course     Course?       @relation(fields: [courseId], references: [id], onDelete: SetNull)
-  tasks      Task[]
-  flashcards Flashcard[]
-  versions   NoteVersion[]
+  tasks       Task[]
+  flashcards  Flashcard[]
+  versions    NoteVersion[]
+  attachments Attachment[]
 
   @@index([userId])
 }
@@ -251,6 +255,59 @@ model NoteVersion {
   note Note @relation(fields: [noteId], references: [id], onDelete: Cascade)
 
   @@index([noteId, createdAt])
+}
+
+/// A saved assistant thread. Without this the chat existed only in component
+/// state and vanished on reload, so an answer could not be revisited.
+model Conversation {
+  id        String    @id @default(uuid())
+  userId    String
+  title     String
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages Message[]
+
+  @@index([userId, updatedAt])
+}
+
+/// One turn. `citations` holds the sources shown with an assistant answer, as
+/// the same JSON the streaming endpoint already emits, so a reopened thread
+/// shows what a live one did.
+model Message {
+  id             String   @id @default(uuid())
+  userId         String
+  conversationId String
+  role           String
+  content        String   @db.Text
+  citations      Json?
+  createdAt      DateTime @default(now())
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+}
+
+/// A file attached to a note. The bytes live on disk under the app's data
+/// directory rather than in Postgres — a database is a poor blob store, and
+/// keeping them out of it keeps the JSON export and the backups small.
+model Attachment {
+  id        String   @id @default(uuid())
+  userId    String
+  noteId    String
+  filename  String
+  mimeType  String
+  byteSize  Int
+  storageKey String  @unique
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  note Note @relation(fields: [noteId], references: [id], onDelete: Cascade)
+
+  @@index([noteId])
 }
 
 model EntityLink {

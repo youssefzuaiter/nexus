@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useActionState, useEffect, useRef, useState, useTransition } from "react";
 import { useFormStatus } from "react-dom";
 import type { ApiResponse } from "@/lib/api-response";
@@ -37,6 +38,7 @@ function AddButton() {
 }
 
 function ScoreCell({ row }: { row: AssessmentRow }) {
+  const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [value, setValue] = useState(row.score === null ? "" : String(row.score));
 
@@ -55,6 +57,9 @@ function ScoreCell({ row }: { row: AssessmentRow }) {
         if (unchanged) return;
         startTransition(async () => {
           await setAssessmentScoreAction(row.id, normalized);
+          // Every figure above this input is derived from the scores, so the
+          // panel has to re-render for the new mark to show up in them.
+          router.refresh();
         });
       }}
       className={`w-20 text-right tabular-nums ${FIELD} disabled:opacity-60`}
@@ -73,6 +78,7 @@ export function GradePanel({
     addAssessmentAction.bind(null, courseId),
     null,
   );
+  const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
   const [target, setTarget] = useState(80);
   const [pending, startTransition] = useTransition();
@@ -195,6 +201,7 @@ export function GradePanel({
                     if (!confirm(`Delete “${row.title}”?`)) return;
                     startTransition(async () => {
                       await deleteAssessmentAction(row.id);
+                      router.refresh();
                     });
                   }}
                   className="shrink-0 text-xs text-text-muted transition-colors hover:text-danger"
@@ -282,6 +289,7 @@ export function GradePanel({
                       }.`
                   : result.error.message,
               );
+              if (result.success) router.refresh();
             });
           }}
           className="rounded-lg border border-border-subtle px-3.5 py-2 text-sm text-text transition-colors hover:bg-surface-raised disabled:opacity-60"

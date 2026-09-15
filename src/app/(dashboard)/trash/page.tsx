@@ -3,7 +3,7 @@ import { listDeletedNotes } from "@/repositories/note-repository";
 import { listDeletedTasks } from "@/repositories/task-repository";
 import { listDeletedProjects } from "@/repositories/project-repository";
 import { TrashRow } from "@/components/trash-row";
-import type { TrashKind } from "@/actions/trash";
+import type { TrashKind } from "@/lib/domain";
 
 export const metadata = { title: "Trash · Nexus" };
 

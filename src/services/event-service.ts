@@ -6,6 +6,7 @@ import * as eventRepository from "@/repositories/event-repository";
 import * as taskRepository from "@/repositories/task-repository";
 import { assertProjectOwned } from "@/services/project-service";
 import { generateOccurrences, type RecurrenceFrequency } from "@/lib/recurrence";
+import { embeddableTextFor } from "@/services/embeddable-text";
 import type { EventInput } from "@/repositories/event-repository";
 import type { EventModel as Event } from "@/generated/prisma/models";
 
@@ -26,41 +27,9 @@ export type CalendarDay = {
   tasks: ScheduledTask[];
 };
 
-const DATE_FORMAT = new Intl.DateTimeFormat("en-GB", {
-  weekday: "long",
-  day: "numeric",
-  month: "long",
-  year: "numeric",
-});
-
-const TIME_FORMAT = new Intl.DateTimeFormat("en-GB", {
-  hour: "2-digit",
-  minute: "2-digit",
-});
-
-// Embedded as a natural sentence rather than "When: …/Where: …" key-value lines.
-// Measured against nomic-embed-text, the prose form scores markedly higher on
-// real questions — "where is my exam being held" went from 0.52 (below the
-// relevance floor, so invisible to the assistant) to 0.56, and queries that
-// already matched improved too. Keep new entity types phrased the same way.
-function embeddableText(event: Event): string {
-  const sameDay =
-    event.startTime.toDateString() === event.endTime.toDateString();
-
-  const when = sameDay
-    ? `on ${DATE_FORMAT.format(event.startTime)}, from ${TIME_FORMAT.format(event.startTime)} to ${TIME_FORMAT.format(event.endTime)}`
-    : `from ${DATE_FORMAT.format(event.startTime)} at ${TIME_FORMAT.format(event.startTime)} until ${DATE_FORMAT.format(event.endTime)} at ${TIME_FORMAT.format(event.endTime)}`;
-
-  const sentence = `${event.title}. This is a calendar event ${when}${
-    event.location ? `, taking place at ${event.location}` : ""
-  }.`;
-
-  return event.description ? `${sentence}\n\n${event.description}` : sentence;
-}
-
 async function syncEventIndex(userId: string, event: Event): Promise<void> {
   try {
-    await indexEntity(userId, "event", event.id, embeddableText(event));
+    await indexEntity(userId, "event", event.id, embeddableTextFor.event(event));
   } catch (error) {
     console.error(`[WARN] Failed to index event ${event.id}:`, error);
     await deleteEntityEmbeddings(userId, "event", event.id).catch(() => {});

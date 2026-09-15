@@ -4,11 +4,8 @@ import { indexEntity, deleteEntityEmbeddings } from "@/lib/vector";
 import { AppError } from "@/lib/api-response";
 import * as projectRepository from "@/repositories/project-repository";
 import type { ProjectInput } from "@/repositories/project-repository";
+import { embeddableTextFor, projectTaskSummary } from "@/services/embeddable-text";
 import type { ProjectModel as Project } from "@/generated/prisma/models";
-
-function embeddableText(project: Project, taskSummary: string): string {
-  return `${project.title}. This is a ${project.category.toLowerCase()} project, ${project.progress}% complete. ${taskSummary}`;
-}
 
 async function syncProjectIndex(userId: string, project: Project) {
   const tasks = await prisma.task.findMany({
@@ -16,19 +13,14 @@ async function syncProjectIndex(userId: string, project: Project) {
     select: { title: true, status: true },
   });
 
-  const summary =
-    tasks.length === 0
-      ? "It has no tasks yet."
-      : `Its tasks are: ${tasks
-          .map((t) => `${t.title}${t.status === "done" ? " (done)" : ""}`)
-          .join("; ")}.`;
+  const summary = projectTaskSummary(tasks);
 
   try {
     await indexEntity(
       userId,
       "project",
       project.id,
-      embeddableText(project, summary),
+      embeddableTextFor.project(project, summary),
     );
   } catch (error) {
     console.error(`[WARN] Failed to index project ${project.id}:`, error);

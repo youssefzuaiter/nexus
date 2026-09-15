@@ -12,7 +12,9 @@
     "db:migrate": "prisma migrate dev",
     "db:studio": "prisma studio",
     "eval": "tsx --conditions=react-server tests/ai/evals.ts",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "test": "tsx --conditions=react-server --test \"tests/unit/*.test.ts\"",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.0",
@@ -31,6 +33,7 @@
     "zod": "^4.6.2"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/pg": "^8.23.1",
