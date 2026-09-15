@@ -56,15 +56,20 @@ jobs:
       - name: Apply migrations
         run: pnpm exec prisma migrate deploy
 
+      # Build first: it generates Next's ambient PageProps/LayoutProps types
+      # into .next/types, which a standalone `tsc` has no other way to see on
+      # a fresh checkout — this is the same gotcha CLAUDE.md already notes
+      # ("next dev does not catch this — pnpm build does"), just hitting a
+      # bare tsc invocation instead of a stale local .next/ directory. Also
+      # verifies migrations actually match what Prisma's client expects.
+      - name: Build
+        run: pnpm build
+
       - name: Type-check
         run: pnpm tsc --noEmit
 
       - name: Lint
         run: pnpm lint
-
-      # Also verifies migrations actually match what Prisma's client expects.
-      - name: Build
-        run: pnpm build
 
       # Pure-function tests only (chunking, grades, recurrence, ics, spaced
       # repetition, pdf, wiki-links) — nothing here touches Postgres or
