@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import {
   proposePlanAction,
@@ -8,6 +9,7 @@ import {
 } from "@/actions/plan";
 
 export function PlanDay() {
+  const router = useRouter();
   const [plan, setPlan] = useState<PlanBlockView[] | null>(null);
   const [skipped, setSkipped] = useState<Set<string>>(new Set());
   const [message, setMessage] = useState<string | null>(null);
@@ -109,6 +111,8 @@ export function PlanDay() {
                         result.data.scheduled === 1 ? "task" : "tasks"
                       }.`,
                     );
+                    // The scheduled tasks now belong in the panels below.
+                    router.refresh();
                   } else {
                     setError(result.error.message);
                   }

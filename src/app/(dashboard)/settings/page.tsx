@@ -3,6 +3,7 @@ import { auth } from "@/auth";
 import { requireUserId } from "@/lib/session";
 import { getProfile } from "@/repositories/profile-repository";
 import { ProfileForm } from "@/components/profile-form";
+import { ReindexButton } from "@/components/reindex-button";
 
 export const metadata = { title: "Settings · Nexus" };
 
@@ -48,6 +49,18 @@ export default async function SettingsPage() {
         <Link href="/audit" className="text-accent hover:underline">
           Review what the assistant proposed and what you approved
         </Link>
+      </div>
+
+      <h2 className="mb-2 mt-6 text-xs font-medium uppercase tracking-wide text-text-faint">
+        Search index
+      </h2>
+      <div className="rounded-xl border border-border-subtle bg-surface p-4">
+        <p className="mb-3 text-sm text-text-muted">
+          Indexing happens as you write, but a save made while the local model
+          was stopped leaves that item out of semantic search until it is saved
+          again. Rebuilding re-embeds everything you own.
+        </p>
+        <ReindexButton />
       </div>
     </div>
   );

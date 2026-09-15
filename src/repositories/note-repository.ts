@@ -37,7 +37,12 @@ function toSummary(
 
 export async function listNotes(
   userId: string,
-  options: { favoritesOnly?: boolean; tag?: string; take?: number } = {},
+  options: {
+    favoritesOnly?: boolean;
+    tag?: string;
+    take?: number;
+    skip?: number;
+  } = {},
 ): Promise<NoteSummary[]> {
   const notes = await prisma.note.findMany({
     where: {
@@ -48,6 +53,7 @@ export async function listNotes(
     },
     orderBy: { updatedAt: "desc" },
     ...(options.take ? { take: options.take } : {}),
+    ...(options.skip ? { skip: options.skip } : {}),
     select: {
       id: true,
       title: true,
@@ -223,4 +229,72 @@ export async function snapshot(
       where: { id: { in: stale.map((row) => row.id) } },
     });
   }
+}
+
+/** Total matching the same filters `listNotes` uses, for paging. */
+export async function countNotes(
+  userId: string,
+  options: { favoritesOnly?: boolean; tag?: string } = {},
+): Promise<number> {
+  return prisma.note.count({
+    where: {
+      userId,
+      deletedAt: null,
+      ...(options.favoritesOnly ? { isFavorite: true } : {}),
+      ...(options.tag ? { tags: { has: options.tag } } : {}),
+    },
+  });
+}
+
+/** Applies one change to many notes at once, scoped by userId in the write. */
+export async function bulkUpdateNotes(
+  userId: string,
+  noteIds: string[],
+  data: { courseId?: string | null; projectId?: string | null },
+): Promise<number> {
+  if (noteIds.length === 0) return 0;
+  const { count } = await prisma.note.updateMany({
+    where: { id: { in: noteIds }, userId, deletedAt: null },
+    data,
+  });
+  return count;
+}
+
+export async function bulkAddTag(
+  userId: string,
+  noteIds: string[],
+  tag: string,
+): Promise<number> {
+  const notes = await prisma.note.findMany({
+    where: { id: { in: noteIds }, userId, deletedAt: null },
+    select: { id: true, tags: true },
+  });
+
+  let changed = 0;
+  for (const note of notes) {
+    if (note.tags.includes(tag)) continue;
+    await prisma.note.update({
+      where: { id: note.id },
+      data: { tags: [...note.tags, tag] },
+    });
+    changed++;
+  }
+  return changed;
+}
+
+export async function bulkSoftDelete(
+  userId: string,
+  noteIds: string[],
+): Promise<string[]> {
+  const owned = await prisma.note.findMany({
+    where: { id: { in: noteIds }, userId, deletedAt: null },
+    select: { id: true },
+  });
+  if (owned.length === 0) return [];
+
+  await prisma.note.updateMany({
+    where: { id: { in: owned.map((note) => note.id) }, userId },
+    data: { deletedAt: new Date() },
+  });
+  return owned.map((note) => note.id);
 }

@@ -6,6 +6,7 @@ import * as taskRepository from "@/repositories/task-repository";
 import { assertProjectOwned, recalculateProgress } from "@/services/project-service";
 import { assertCourseOwned } from "@/services/course-service";
 import { generateOccurrences, type RecurrenceFrequency } from "@/lib/recurrence";
+import { embeddableTextFor } from "@/services/embeddable-text";
 import type { TaskInput, TaskStatus, TaskPriority } from "@/repositories/task-repository";
 import type { TaskModel as Task } from "@/generated/prisma/models";
 
@@ -19,32 +20,9 @@ export type GroupedTasks = {
   done: Task[];
 };
 
-const DATE_FORMAT = new Intl.DateTimeFormat("en-GB", {
-  weekday: "long",
-  day: "numeric",
-  month: "long",
-  year: "numeric",
-});
-
-// Natural prose, not "Due …/Priority …" key-value lines — see the note in
-// event-service.ts for the measured retrieval difference.
-function embeddableText(task: Task): string {
-  const due = task.dueDate
-    ? `, due ${DATE_FORMAT.format(task.dueDate)}`
-    : ", with no due date";
-
-  const state = task.status === "done" ? " It is already completed." : "";
-
-  const tagLine =
-    task.tags.length > 0 ? ` It is tagged ${task.tags.join(", ")}.` : "";
-  const sentence = `${task.title}. This is a task${due}, with ${task.priority} priority, estimated at ${task.estimatedMinutes} minutes.${state}${tagLine}`;
-
-  return task.description ? `${sentence}\n\n${task.description}` : sentence;
-}
-
 async function syncTaskIndex(userId: string, task: Task): Promise<void> {
   try {
-    await indexEntity(userId, "task", task.id, embeddableText(task));
+    await indexEntity(userId, "task", task.id, embeddableTextFor.task(task));
   } catch (error) {
     console.error(`[WARN] Failed to index task ${task.id}:`, error);
     await deleteEntityEmbeddings(userId, "task", task.id).catch(() => {});

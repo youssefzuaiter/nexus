@@ -5,6 +5,7 @@ import { getDashboard } from "@/services/dashboard-service";
 import { TaskRow } from "@/components/task-row";
 import { QuickCapture } from "@/components/quick-capture";
 import { PlanDay } from "@/components/plan-day";
+import { Reminders } from "@/components/reminders";
 import type { EventModel as Event } from "@/generated/prisma/models";
 
 export const metadata = { title: "Dashboard · Nexus" };
@@ -141,6 +142,10 @@ export default async function DashboardPage() {
       </header>
 
       <QuickCapture />
+
+      <div className="mt-4">
+        <Reminders />
+      </div>
 
       {isEmpty ? (
         <div className="rounded-xl border border-dashed border-border-strong px-6 py-12 text-center">

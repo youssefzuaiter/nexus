@@ -13,6 +13,13 @@ export type TaskPriority = (typeof TASK_PRIORITIES)[number];
 
 export type ProjectOption = { id: string; title: string };
 
+// The entities that support soft delete, and so can appear in the trash.
+// Lives here rather than in actions/trash.ts because a "use server" module may
+// only export async functions — exporting this from there made every restore
+// and purge fail at runtime with "can only export async functions".
+export const TRASH_KINDS = ["note", "task", "project"] as const;
+export type TrashKind = (typeof TRASH_KINDS)[number];
+
 // Shared between the unscheduled-tasks drag source and the calendar's drop
 // targets so a typo in one place can't silently break the other.
 export const TASK_DRAG_MIME = "application/x-nexus-task-id";

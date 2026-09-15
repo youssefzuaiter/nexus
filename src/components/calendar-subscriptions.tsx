@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useActionState, useState, useTransition } from "react";
 import { useFormStatus } from "react-dom";
 import type { ApiResponse } from "@/lib/api-response";
@@ -31,6 +32,7 @@ function AddButton() {
 }
 
 function Row({ subscription }: { subscription: SubscriptionRow }) {
+  const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -67,6 +69,9 @@ function Row({ subscription }: { subscription: SubscriptionRow }) {
               setMessage(
                 `Updated — ${result.data.imported} events, ${result.data.removed} removed.`,
               );
+              // The row's own counts are server-rendered; without this the
+              // "synced" line still shows the previous run.
+              router.refresh();
             } else {
               setError(result.error.message);
             }
@@ -92,6 +97,7 @@ function Row({ subscription }: { subscription: SubscriptionRow }) {
           startTransition(async () => {
             const result = await removeSubscriptionAction(subscription.id);
             if (!result.success) setError(result.error.message);
+            else router.refresh();
           });
         }}
         className="rounded-lg px-3 py-1.5 text-sm text-text-muted transition-colors hover:bg-danger-soft hover:text-danger disabled:opacity-60"

@@ -1,7 +1,9 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { restoreAction, purgeAction, type TrashKind } from "@/actions/trash";
+import { restoreAction, purgeAction } from "@/actions/trash";
+import type { TrashKind } from "@/lib/domain";
 
 export function TrashRow({
   kind,
@@ -14,6 +16,7 @@ export function TrashRow({
   title: string;
   deletedAt: string;
 }) {
+  const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
@@ -21,7 +24,14 @@ export function TrashRow({
     setError(null);
     startTransition(async () => {
       const result = await action({ kind, id });
-      if (!result.success) setError(result.error.message);
+      if (!result.success) {
+        setError(result.error.message);
+        return;
+      }
+      // Called from a click handler rather than a <form>, so revalidatePath
+      // alone leaves this already-rendered list showing the row that just
+      // left the trash. Same reason calendar-dnd.tsx refreshes after a drop.
+      router.refresh();
     });
   }
 

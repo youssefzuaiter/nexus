@@ -2,7 +2,14 @@ import Link from "next/link";
 import { requireUserId } from "@/lib/session";
 import { searchNotes } from "@/services/note-service";
 import { listNotes, listTags } from "@/repositories/note-repository";
-import { hueForId, tintClass } from "@/lib/card-color";
+import { hueForId } from "@/lib/card-color";
+import { NoteGrid } from "@/components/note-grid";
+import { countNotes } from "@/repositories/note-repository";
+import { listCourseOptions } from "@/repositories/course-repository";
+import { listProjectOptions } from "@/repositories/project-repository";
+
+// Enough to fill a screen without loading a whole imported vault at once.
+const PAGE_SIZE = 24;
 
 export const metadata = { title: "Notes · Nexus" };
 
@@ -23,17 +30,35 @@ export default async function NotesPage({
   const query = typeof params.q === "string" ? params.q : "";
   const tag = typeof params.tag === "string" ? params.tag : "";
   const favoritesOnly = params.favorites === "1";
+  const page = Math.max(1, Number(params.page) || 1);
 
-  const [result, tags] = await Promise.all([
+  const [result, tags, total, courses, projects] = await Promise.all([
     query
       ? searchNotes(userId, query)
-      : listNotes(userId, { favoritesOnly, tag: tag || undefined }).then(
-          (notes) => ({ mode: "semantic" as const, notes }),
-        ),
+      : listNotes(userId, {
+          favoritesOnly,
+          tag: tag || undefined,
+          take: PAGE_SIZE,
+          skip: (page - 1) * PAGE_SIZE,
+        }).then((notes) => ({ mode: "semantic" as const, notes })),
     listTags(userId),
+    countNotes(userId, { favoritesOnly, tag: tag || undefined }),
+    listCourseOptions(userId),
+    listProjectOptions(userId),
   ]);
 
   const { notes, mode } = result;
+
+  // Search returns its own ranked set; paging applies to browsing only.
+  const pageCount = query ? 1 : Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const pageHref = (target: number) => {
+    const search = new URLSearchParams();
+    if (tag) search.set("tag", tag);
+    if (favoritesOnly) search.set("favorites", "1");
+    if (target > 1) search.set("page", String(target));
+    const qs = search.toString();
+    return qs ? `/notes?${qs}` : "/notes";
+  };
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -41,7 +66,8 @@ export default async function NotesPage({
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-text">Notes</h1>
           <p className="mt-1 text-sm text-text-muted">
-            {notes.length} {notes.length === 1 ? "note" : "notes"}
+            {query ? notes.length : total}{" "}
+            {(query ? notes.length : total) === 1 ? "note" : "notes"}
             {query && mode === "semantic" && " · ranked by meaning"}
             {query && mode === "keyword" && " · keyword match (model offline)"}
           </p>
@@ -125,53 +151,53 @@ export default async function NotesPage({
       {notes.length === 0 ? (
         <p className="rounded-xl border border-dashed border-border-strong px-4 py-10 text-center text-sm text-text-muted">
           {query
-            ? `Nothing matched “${query}”.`
+            ? `Nothing matched \u201c${query}\u201d.`
             : "No notes yet. Create your first one."}
         </p>
       ) : (
-        <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          {notes.map((note) => (
-            <li key={note.id}>
-              <Link
-                href={`/notes/${note.id}`}
-                className={`block rounded-2xl p-4 transition-transform hover:-translate-y-0.5 ${tintClass(
-                  hueForId(note.id),
-                )}`}
-              >
-                <div className="flex items-baseline justify-between gap-3">
-                  <h2 className="truncate font-medium text-text">
-                    {note.isFavorite && (
-                      <span className="mr-1.5 text-accent" aria-label="Favorite">
-                        ★
-                      </span>
-                    )}
-                    {note.title}
-                  </h2>
-                  <span className="shrink-0 text-xs text-text-muted">
-                    {formatDate(note.updatedAt)}
-                  </span>
-                </div>
-                {note.excerpt && (
-                  <p className="mt-1 line-clamp-2 text-sm text-text-muted">
-                    {note.excerpt}
-                  </p>
-                )}
-                {note.tags.length > 0 && (
-                  <div className="mt-2 flex flex-wrap gap-1">
-                    {note.tags.map((name) => (
-                      <span
-                        key={name}
-                        className="rounded-full bg-surface-raised px-2 py-0.5 text-xs text-text-muted"
-                      >
-                        {name}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </Link>
-            </li>
-          ))}
-        </ul>
+        <>
+          <NoteGrid
+            courses={courses}
+            projects={projects}
+            notes={notes.map((note) => ({
+              id: note.id,
+              title: note.title,
+              excerpt: note.excerpt,
+              tags: note.tags,
+              isFavorite: note.isFavorite,
+              updated: formatDate(note.updatedAt),
+              hue: hueForId(note.id),
+            }))}
+          />
+
+          {pageCount > 1 && (
+            <nav className="mt-4 flex items-center justify-between gap-3 text-sm">
+              {page > 1 ? (
+                <Link
+                  href={pageHref(page - 1)}
+                  className="rounded-lg border border-border-subtle px-3 py-1.5 text-text transition-colors hover:bg-surface-raised"
+                >
+                  ← Newer
+                </Link>
+              ) : (
+                <span />
+              )}
+              <span className="text-text-muted">
+                Page {page} of {pageCount}
+              </span>
+              {page < pageCount ? (
+                <Link
+                  href={pageHref(page + 1)}
+                  className="rounded-lg border border-border-subtle px-3 py-1.5 text-text transition-colors hover:bg-surface-raised"
+                >
+                  Older →
+                </Link>
+              ) : (
+                <span />
+              )}
+            </nav>
+          )}
+        </>
       )}
     </div>
   );

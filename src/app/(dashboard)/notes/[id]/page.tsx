@@ -19,6 +19,8 @@ import { listForNote } from "@/repositories/flashcard-repository";
 import { GenerateCards } from "@/components/generate-cards";
 import { NoteView } from "@/components/note-view";
 import { RelatedItems } from "@/components/related-items";
+import { NoteAttachments } from "@/components/note-attachments";
+import { listForNote as listAttachments } from "@/repositories/attachment-repository";
 import { findRelated } from "@/services/search-service";
 import { normalizeTitle } from "@/lib/wiki-links";
 
@@ -32,7 +34,7 @@ export default async function NotePage({ params }: PageProps<"/notes/[id]">) {
   const note = await getNote(userId, id);
   if (!note) notFound();
 
-  const [projects, courses, outgoing, backlinks, titles, trackFocus, cards] =
+  const [projects, courses, outgoing, backlinks, titles, trackFocus, cards, attachments] =
     await Promise.all([
       listProjectOptions(userId),
       listCourseOptions(userId),
@@ -41,6 +43,7 @@ export default async function NotePage({ params }: PageProps<"/notes/[id]">) {
       Promise.resolve(parseWikiLinks(note.content)),
       isTrackingEnabled(userId),
       listForNote(userId, note.id),
+      listAttachments(userId, note.id),
     ]);
   const [{ resolved, unresolved }, related] = await Promise.all([
     resolveNoteTitles(userId, titles),
@@ -101,6 +104,19 @@ export default async function NotePage({ params }: PageProps<"/notes/[id]">) {
 
       <section className="mt-6 border-t border-border-subtle pt-5">
         <GenerateCards noteId={note.id} existing={cards.length} />
+      </section>
+
+      <section className="mt-6 border-t border-border-subtle pt-5">
+        <NoteAttachments
+          noteId={note.id}
+          attachments={attachments.map((attachment) => ({
+            id: attachment.id,
+            filename: attachment.filename,
+            mimeType: attachment.mimeType,
+            size: `${Math.max(1, Math.round(attachment.byteSize / 1024))} KB`,
+            isImage: attachment.mimeType.startsWith("image/"),
+          }))}
+        />
       </section>
 
       <section className="mt-6 border-t border-border-subtle pt-5">
