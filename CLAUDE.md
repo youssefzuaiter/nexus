@@ -306,6 +306,70 @@ shows the week containing September 1st, not the current week. Day view skips
 the per-cell item cap (month: 5–6, week: same) and renders a flat chronological
 agenda instead — a day has room for the full list.
 
+## Trash and soft-delete recovery
+
+`/trash` lists the three soft-deletable entities — `TRASH_KINDS` in
+`lib/domain.ts` is `["note", "task", "project"]`. `Event` never appears there
+because it is hard-deleted (see "Events are hard deleted" above). That constant
+was moved out of `actions/trash.ts` and into `lib/domain.ts` because a
+`"use server"` module may only export async functions; exporting a plain array
+from one made every restore and purge fail at runtime.
+
+`TrashRow`'s restore/purge buttons are plain click handlers, not a `<form>`, so
+— the same reason `calendar-dnd.tsx` and `scheduleTaskAction` need it —
+`revalidatePath` alone leaves the row showing in an already-rendered list after
+it leaves the trash; the component calls `router.refresh()` itself once the
+action resolves.
+
+## Day planning
+
+The dashboard's "Plan my day" button (`components/plan-day.tsx`) is pure
+arithmetic, not a model call — `lib/day-planner.ts` has no Prisma import and no
+LLM in its path, the same split the capture parser makes for dates: which task
+matters most is a sort, and where it fits is subtraction, and a 3B model is not
+better at either.
+
+`freeIntervals()` computes the day's open gaps between 09:00 and 21:00
+(`DAY_START_HOUR`/`DAY_END_HOUR`), given real events and already-scheduled
+blocks as "busy". Only the lower bound is clamped to `now`: an earlier version
+also compared `now < dayEnd`, which meant that once the day was over the clamp
+fell back to `dayStart` and happily proposed slotting a task into that
+morning's already-past 09:00 slot at 11pm. `planDay()` then places tasks
+highest-priority first, then soonest due, then shortest, so a day that cannot
+fit everything still fills with what matters most; a task is never split
+across gaps or shortened to fit — a 90-minute task waits for a day with room
+rather than becoming a 30-minute one. Each placed block gets a 10-minute gap
+after it, so a plan is not a wall of back-to-back work.
+
+`proposePlanAction` only computes and returns a plan, exactly like
+`/api/ai/parse` — nothing is written until the user confirms. `applyPlanAction`
+then re-derives the plan from scratch and only schedules the subset of task ids
+the browser sent back, rather than trusting the times it was given, since a
+plan that went through the browser is client input regardless of what produced
+it (the same rule action-service.ts and capture confirmation follow).
+
+## Course grades
+
+`lib/grades.ts` is pure arithmetic over a course's `Assessment` rows — no
+Prisma, no model, so "what do I need on the final" is checkable rather than
+trusted. `summarise()` reports `earned`, `gradedWeight`/`remainingWeight`,
+`currentAverage` (null until anything is graded), `bestPossible` (everything
+remaining scored perfectly), and `declaredWeight`, which need not add up to
+100. Only the floor of a score-to-max ratio is clamped, not the ceiling —
+bonus marks above the stated max are real and should count.
+
+`neededForTarget()` returns one of three shapes rather than a single number,
+because "you need 104%" and "you already have it" are answers a plain
+percentage would blur: `achieved` (already there), `impossible` (even a
+perfect score on everything left falls short, by how much), or `needed` (the
+average still required on what's ungraded).
+
+Every derived figure shown in `GradePanel` — the average, what's still needed,
+the whole row above the input — is computed server-side from the scores, so
+each mutation (`setAssessmentScoreAction`, add, delete) is followed by
+`router.refresh()`; without it the panel kept showing the pre-edit numbers
+until some unrelated navigation forced a re-render.
+
 ## Testing UI with Playwright
 
 Assert against `page.locator("main").innerText()`, **never `body.textContent`**.
@@ -375,6 +439,32 @@ the assistant is strictly read-only and `userId` comes from the session, so the
 worst an injection achieves is a wrong or silly answer — it provably cannot reach
 another tenant's data, because that data never enters the context window. The evals
 assert exactly that, including under a fully compromised answer.
+
+### Assistant threads persist across a reload
+
+Before `Conversation`/`Message` existed, a chat lived only in `AssistantChat`'s
+component state and vanished on reload — there was no way to revisit an
+answer. `api/ai/chat/route.ts` now opens a `Conversation` on the first turn
+(named from the question, `titleFrom()`, truncated at 80 characters) and sends
+its id back as the opening frame; every later turn from that thread carries
+the id so it lands in the same row. The user's question is written before the
+model is called; the answer is accumulated as it streams and written once in
+the route's `finally` block — a partial answer is still worth keeping, since
+the user already saw it on screen before the connection dropped or the request
+was aborted.
+
+`appendMessage` re-checks that the conversation is still the caller's own on
+*every* turn, not just the first — the id arrives from the browser on every
+request after the first frame, so it is client input each time, not just at
+creation.
+
+**Reopening a past thread does not replay its proposals.** `AssistantPage`
+loads a thread's saved messages but deliberately does not reconstruct
+`ProposalCard`s from them: confirming a tool-call proposal is a live decision,
+and a reopened thread showing yesterday's confirm/decline buttons would invite
+acting on a request whose context has since moved on. Past proposals — and
+whether they were confirmed or declined — are reviewed on `/audit`, not
+replayed inside the chat.
 
 ## Focus telemetry is opt-in, and that is enforced on the server
 
@@ -463,6 +553,121 @@ Detection is measured, not assumed, and the two directions are not equally
 serious: proposing on a plain question is intrusive and is asserted at zero;
 failing to propose is benign and only reported (currently ~2/3).
 
+## Reminders are polled, not pushed
+
+`dueRemindersAction` has no new schema behind it — it reads tasks due today
+that are still open and events starting within the hour directly off `Task`
+and `Event`. There is no `Reminder` model, no job runner, and no server
+process outside a request in this app, so a real scheduler would be a whole
+piece of infrastructure for one feature; a reminder is also only useful while
+the dashboard is open anyway, since nothing else in this app could deliver
+one. `components/reminders.tsx` polls every 5 minutes and, if the browser has
+granted permission, raises a `Notification` for anything not already
+announced. Permission is requested on a click, never on mount — an unsolicited
+permission prompt on page load is the kind of thing that gets a site's
+notifications blocked outright. Which reminders have already fired is kept in
+`localStorage`, not on the server: it's this browser's own notification
+history, not state another device should inherit.
+
+## File attachments
+
+Attachment bytes live on disk under `data/attachments/`, not in Postgres — a
+database is a poor blob store, and keeping files out of it is what keeps the
+JSON export and any backup dump small, the same reasoning that already
+excludes `WorkspaceEmbedding` from the export. The stored filename is always a
+generated `{uuid}.{ext}`, never derived from the upload's own name: a filename
+from the browser is attacker-controlled text, and building a path from it is
+how `"../../.env"` becomes a write primitive. `getAttachment` re-validates that
+shape before reading rather than trusting a stored key, so a crafted key
+cannot escape the directory either.
+
+What may be uploaded is an explicit allowlist (`png`/`jpeg`/`gif`/`webp`/`pdf`/
+`txt`/`md`/`csv`, capped at 10MB) that deliberately excludes anything the
+browser could execute in this origin — HTML, SVG, inline scripts — so a stored
+file can never become script running as the signed-in user. `GET
+/api/attachments/[id]` still sets `Content-Disposition: attachment` and
+`X-Content-Type-Options: nosniff` on top of that allowlist, on the principle
+that serving user-supplied bytes inline from the app's own origin is a habit
+not worth forming even when today's allowlist happens to make it safe.
+Deleting an attachment removes the database row before the file on disk: an
+orphaned file only wastes space, but an orphaned row would leave a download
+link that 404s.
+
+## Bulk note actions and pagination
+
+`NoteGrid`/`NoteBulkBar` let a multi-selection of notes be moved to a course or
+project, tagged, or soft-deleted together. Every bulk mutation is still scoped
+by `userId` at the point of write: `bulkAssignCourseAction` and
+`bulkAssignProjectAction` call `assertCourseOwned`/`assertProjectOwned` on the
+target id before touching anything, since that id — like a single note's
+`projectId` — arrived from the browser. `bulkAddTag` reads the caller's own
+rows first and issues one `update()` per row after that, matching this
+codebase's existing rule that a plain `update()` (which matches on id alone)
+must be preceded by a `userId`-scoped read rather than trusted on its own.
+Bulk delete reuses the exact per-note cleanup a single delete does —
+`deleteEntityEmbeddings` and `deleteLinksFor` for each id — rather than a
+bulk-shaped shortcut, since a soft-deleted note has to leave the search index
+immediately regardless of how many left at once.
+
+The notes list also gained pagination (`PAGE_SIZE` = 24) so browsing loads a
+screen at a time instead of a whole imported vault in one response; paging
+only applies to browsing a tag/favorites view — a text search still returns
+its own fully-ranked set on one page, since re-ranking a "page 2 of search
+results" would need the whole result set scored anyway.
+
+## Search index maintenance
+
+`services/embeddable-text.ts` centralises the note/task/event/project-to-prose
+phrasing that used to be duplicated inside each entity's own service. It
+exists as its own module specifically so `services/reindex-service.ts` can
+produce byte-identical text to whatever the write path already embedded — two
+independently maintained copies of a measured phrasing (see "Embed entities as
+natural prose" above) would drift apart silently, and the only symptom would
+be quietly worse retrieval for whichever rows were last rebuilt.
+
+`/settings` exposes a manual "Rebuild search index" button because indexing at
+write time is best-effort: a save made while Ollama was stopped still
+succeeds, but drops its stale embeddings and leaves that entity invisible to
+semantic search until it's saved again (see "Index upkeep is a service
+concern" above) — and bulk PDF import makes it easy to create many such notes
+in one sitting with no obvious sign anything is missing. `reindexEverything`
+re-embeds everything a user owns and keeps going if one row fails to embed,
+reporting a failed count alongside the succeeded one rather than abandoning
+the rest of the rebuild.
+
+## Calendar subscriptions (ICS import)
+
+`lib/ics.ts` is a focused RFC 5545 reader for the subset a university
+timetable actually exports — `VEVENT`s with `DTSTART`/`DTEND`, a weekly
+`RRULE`, `EXDATE`s — written as pure text logic with no Prisma import, the
+same split as `lib/chunking.ts`. Anything it cannot represent is skipped
+rather than guessed at, because a feed is untrusted input, not a contract. Two
+caps exist purely to survive a malformed or hostile feed: 120 expanded
+occurrences per `VEVENT` (a class meeting weekly across two semesters is
+~40 — this is well above that) and 2000 events per feed overall.
+
+Fetching a feed URL goes through `assertFetchableUrl`, which refuses
+`localhost`, loopback, and the private IPv4 ranges — without that check, a
+"calendar" URL is a standing invitation to make this server's own requests
+hit its internal network on the user's behalf (SSRF), which is exactly the
+shape a webhook or subscription URL takes.
+
+`syncSubscription` is safe to call repeatedly: it's keyed by `(subscriptionId,
+externalUid)`, so re-running it makes the imported events match the feed
+exactly — new ones are added, changed ones updated in place, and ones no
+longer in the feed are deleted along with their embeddings, rather than
+accumulating. `addSubscription` deletes the subscription row it just created
+if the very first sync fails, since a feed that can't be read isn't a calendar
+worth keeping a permanently-broken row for. `removeSubscription` cleans up its
+events' embeddings explicitly — the `Event` rows themselves cascade with the
+subscription via the foreign key, but a cascaded delete doesn't touch
+pgvector, which lives outside the relation Prisma knows about.
+
+`SubscriptionRow`'s "last synced" line is server-rendered from data the sync
+action doesn't return to the client, so — like several other click-triggered
+(non-`<form>`) mutations in this app — the sync and remove buttons call
+`router.refresh()` themselves after the action resolves.
+
 ## Data export
 
 `GET /api/export` (`services/export-service.ts`) dumps everything a user owns
@@ -475,8 +680,8 @@ leaking it. `WorkspaceEmbedding` is skipped entirely: it's derived and
 regenerable from the content already in the export, and its `vector` column
 is a Prisma `Unsupported` type that cannot be selected into JSON regardless.
 Soft-deleted notes, tasks and projects are left out the same way every other
-read path in this app already treats `deletedAt` as gone — a "trash" is a
-separate feature this app doesn't have, not an export option to add.
+read path in this app already treats `deletedAt` as gone; `/trash` (below) is
+where they are recovered or purged, not the export.
 
 ## Auth and route protection
 
@@ -518,17 +723,24 @@ src/
 │   ├── (dashboard)/         # Main protected shell — redirects to /login if not
 │   │   ├── layout.tsx       # Sidebar + Command Palette (⌘K)
 │   │   ├── page.tsx         # Dashboard home (Today, Schedule, Recent, Projects)
-│   │   ├── calendar/        # Month/week/day views + Next up, event detail
-│   │   ├── notes/           # List, editor, semantic search, wiki backlinks, graph view, PDF import
+│   │   ├── calendar/        # Month/week/day views + Next up, event detail; calendar/subscriptions for ICS import
+│   │   ├── notes/           # List (paginated, bulk actions), editor, semantic search, wiki backlinks, graph view, PDF import
 │   │   ├── tasks/           # Buckets (Overdue/Today/Upcoming/Someday), detail
 │   │   ├── projects/        # Hub with derived progress, linked contents
-│   │   ├── ai/              # RAG Assistant: cited answers + proposals
+│   │   ├── courses/         # Courses, assessments/grades, flashcard review
+│   │   ├── cards/           # Spaced-repetition flashcard review queue
+│   │   ├── review/          # Cross-course review session
+│   │   ├── search/          # Semantic search across all entity types
+│   │   ├── ai/              # RAG Assistant: saved threads, cited answers + proposals
 │   │   ├── focus/           # Opt-in writing telemetry and its controls
-│   │   └── audit/           # Read-only AuditEvent trail (proposed/created/declined)
+│   │   ├── audit/           # Read-only AuditEvent trail (proposed/created/declined)
+│   │   ├── trash/           # Recover or purge soft-deleted notes/tasks/projects
+│   │   └── settings/        # Profile, focus-tracking toggle, manual reindex
 │   └── api/
 │       ├── ai/
-│       │   ├── chat/route.ts    # RAG vector search + LLM generation
+│       │   ├── chat/route.ts    # RAG vector search + LLM generation, persists Conversation/Message
 │       │   └── parse/route.ts   # Capture → proposal (never writes)
+│       ├── attachments/[id]/route.ts  # Serves one attachment to its owner
 │       └── export/route.ts      # Full-account JSON download
 ├── actions/                 # Server Actions (Zod validated)
 ├── services/                # Domain business logic / use cases
@@ -540,14 +752,19 @@ src/
 │   ├── vector.ts            # indexEntity, searchWorkspaceVectors (pgvector)
 │   ├── chunking.ts          # Pure text chunking, no DB or env dependency
 │   ├── api-response.ts      # ApiResponse contract, error taxonomy, AppError
-│   ├── domain.ts            # Shared constants safe to import from client code
+│   ├── domain.ts            # Shared constants safe to import from client code (incl. TRASH_KINDS)
 │   ├── session.ts           # requireUserId() — the only source of a userId
 │   ├── password.ts          # scrypt hashing and constant-time verification
 │   ├── rate-limit.ts        # In-memory login attempt throttling
 │   ├── recurrence.ts        # Occurrence-date generation for repeating tasks/events
 │   ├── pdf.ts               # PDF text extraction for /notes/import
+│   ├── ics.ts               # Pure RFC 5545 reader for calendar subscription feeds
+│   ├── day-planner.ts       # Pure free-interval + priority scheduling arithmetic
+│   ├── grades.ts            # Pure course-mark arithmetic over Assessment rows
+│   ├── attachment-store.ts  # On-disk attachment storage, allowlisted MIME types
 │   └── config.ts            # Fail-fast validated environment configuration
 tests/ai/evals.ts            # AI evaluation & guardrail benchmarks
+tests/unit/, tests/e2e/      # Unit tests for pure lib/ modules; Playwright end-to-end
 prisma/migrations/           # Reviewable migration history
 ```
 
