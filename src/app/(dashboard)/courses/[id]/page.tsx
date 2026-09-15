@@ -5,11 +5,28 @@ import {
   getCourse,
   listCourseContents,
 } from "@/repositories/course-repository";
+import { countDueForCourse } from "@/repositories/flashcard-repository";
+import { summarise, nextUngraded } from "@/lib/grades";
 import { GradePanel } from "@/components/grade-panel";
 import { ConfirmDeleteButton } from "@/components/confirm-delete-button";
 import { deleteCourseAction } from "@/actions/courses";
 
 export const metadata = { title: "Course · Nexus" };
+
+/** "today"/"tomorrow"/"in N days" — counted in whole calendar days, not exact
+ *  hours, the same whole-day convention task buckets use: a final at 23:59
+ *  today should read "today", not "in 1 day" just because it's currently
+ *  2pm. */
+function daysUntilLabel(dueDate: Date, now: Date): string {
+  const startOfDay = (date: Date) =>
+    new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const days = Math.round(
+    (startOfDay(dueDate).getTime() - startOfDay(now).getTime()) / 86_400_000,
+  );
+  if (days <= 0) return "today";
+  if (days === 1) return "tomorrow";
+  return `in ${days} days`;
+}
 
 const DATE = new Intl.DateTimeFormat("en-GB", {
   day: "numeric",
@@ -33,8 +50,15 @@ export default async function CoursePage({
   const course = await getCourse(userId, id);
   if (!course) notFound();
 
-  const contents = await listCourseContents(userId, course.id);
+  const now = new Date();
+  const [contents, dueCards] = await Promise.all([
+    listCourseContents(userId, course.id),
+    countDueForCourse(userId, course.id, now),
+  ]);
   const deleteThisCourse = deleteCourseAction.bind(null, course.id);
+
+  const grade = summarise(course.assessments);
+  const next = nextUngraded(course.assessments, now);
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -51,6 +75,31 @@ export default async function CoursePage({
         </h1>
         <p className="mt-1 text-sm text-text-muted">{course.term}</p>
       </header>
+
+      <section className="mb-6 flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-xl border border-border-subtle bg-surface px-4 py-3 text-sm text-text-muted">
+        {next && (
+          <span>
+            <strong className="text-text">{next.title}</strong>{" "}
+            {daysUntilLabel(next.dueDate, now)}
+          </span>
+        )}
+        <span>
+          current average{" "}
+          <strong className="text-text">
+            {grade.currentAverage === null
+              ? "—"
+              : `${Math.round(grade.currentAverage)}%`}
+          </strong>
+        </span>
+        <span>
+          best possible <strong className="text-text">{Math.round(grade.bestPossible)}%</strong>
+        </span>
+        {dueCards > 0 && (
+          <Link href="/cards" className="text-accent hover:underline">
+            {dueCards} flashcard{dueCards === 1 ? "" : "s"} due
+          </Link>
+        )}
+      </section>
 
       <GradePanel
         courseId={course.id}

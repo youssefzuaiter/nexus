@@ -1,6 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { summarise, neededForTarget, type Assessed } from "@/lib/grades";
+import {
+  summarise,
+  neededForTarget,
+  nextUngraded,
+  type Assessed,
+  type UpcomingAssessment,
+} from "@/lib/grades";
 
 const midterm: Assessed = { weight: 30, score: 72, maxScore: 100 };
 const homework: Assessed = { weight: 20, score: 90, maxScore: 100 };
@@ -78,4 +84,51 @@ test("weights that do not add to 100 are reported rather than normalised", () =>
   ]);
   assert.equal(summary.declaredWeight, 70);
   assert.equal(summary.earned, 30);
+});
+
+const now = new Date("2026-09-15T12:00:00");
+
+function upcoming(
+  title: string,
+  daysFromNow: number,
+  score: number | null,
+): UpcomingAssessment {
+  return {
+    title,
+    score,
+    dueDate: new Date(now.getTime() + daysFromNow * 86_400_000),
+  };
+}
+
+test("the soonest ungraded assessment wins, not just the first in the list", () => {
+  const next = nextUngraded(
+    [upcoming("Final", 30, null), upcoming("Midterm", 5, null)],
+    now,
+  );
+  assert.equal(next?.title, "Midterm");
+});
+
+test("an already-scored assessment is never proposed as something to study for", () => {
+  const next = nextUngraded(
+    [upcoming("Quiz", 1, 90), upcoming("Midterm", 5, null)],
+    now,
+  );
+  assert.equal(next?.title, "Midterm");
+});
+
+test("an assessment with no due date is never proposed", () => {
+  const next = nextUngraded(
+    [{ title: "Participation", dueDate: null, score: null }],
+    now,
+  );
+  assert.equal(next, null);
+});
+
+test("a due date already in the past is not upcoming", () => {
+  const next = nextUngraded([upcoming("Late quiz", -1, null)], now);
+  assert.equal(next, null);
+});
+
+test("nothing left to grade means no next assessment", () => {
+  assert.equal(nextUngraded([], now), null);
 });
