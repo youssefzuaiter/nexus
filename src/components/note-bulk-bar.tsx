@@ -31,9 +31,24 @@ export function NoteBulkBar({
   const [tag, setTag] = useState("");
   const [message, setMessage] = useState<string | null>(null);
 
-  if (selected.length === 0) return null;
+  // Kept mounted while there's a message to show, even once selection is
+  // empty — otherwise a delete's own onDone() (see below) would unmount this
+  // component in the same render that sets the message, so "Moved N notes to
+  // the trash" would never actually appear on screen.
+  if (selected.length === 0 && !message) return null;
 
-  function run(work: () => Promise<{ message: string } | { error: string }>) {
+  /**
+   * `afterSuccess` defaults to a no-op rather than clearing the selection: a
+   * tag or course/project assignment leaves the same notes selected and
+   * visible, so there's no reason to lose the selection just because one
+   * action on it succeeded — the user may well want to apply a second one
+   * to the same set. Delete is the one action that removes the notes from
+   * the list entirely, so only it passes `onDone`.
+   */
+  function run(
+    work: () => Promise<{ message: string } | { error: string }>,
+    afterSuccess: () => void = () => {},
+  ) {
     setMessage(null);
     startTransition(async () => {
       const result = await work();
@@ -42,7 +57,7 @@ export function NoteBulkBar({
         return;
       }
       setMessage(result.message);
-      onDone();
+      afterSuccess();
       router.refresh();
     });
   }
@@ -154,7 +169,7 @@ export function NoteBulkBar({
             return result.success
               ? { message: `Moved ${result.data.deleted} notes to the trash.` }
               : { error: result.error.message };
-          });
+          }, onDone);
         }}
         className="rounded-lg px-2.5 py-1.5 text-sm text-text-muted transition-colors hover:bg-danger-soft hover:text-danger disabled:opacity-60"
       >

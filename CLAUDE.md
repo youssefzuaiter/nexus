@@ -833,6 +833,58 @@ tests/unit/, tests/e2e/      # Unit tests for pure lib/ modules; Playwright end-
 prisma/migrations/           # Reviewable migration history
 ```
 
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on every push to `main` and every pull
+request, as two jobs rather than one:
+
+- **`checks`** — `prisma migrate deploy` against a real `pgvector/pgvector:pg17`
+  service container, then `tsc --noEmit`, `pnpm lint`, `pnpm build`, and
+  `pnpm test`. Nothing here calls Ollama — the unit suite is pure functions
+  only (chunking, grades, recurrence, ics, spaced repetition, pdf,
+  wiki-links) — so this tier is fast and has nothing environmental to flake
+  on. `pnpm lint` is included deliberately: "React 19 rejects synchronous
+  `setState` inside an effect body… `pnpm lint` catches this; `tsc` does
+  not" is already true of this codebase, so a CI setup that ran `tsc` alone
+  would have a real gap.
+- **`e2e`** — installs and starts a real Ollama, pulls the two models the
+  app actually uses (`OLLAMA_EMBEDDING_MODEL`/`OLLAMA_CHAT_MODEL`), then runs
+  the full Playwright suite against the real dev server and a real Postgres.
+  This is the same "trust the browser, not the typecheck" principle already
+  applied by hand elsewhere in this project, now enforced on every push
+  instead of only when someone remembers to run `pnpm test:e2e` themselves.
+
+**Both jobs need `DATABASE_URL` pointed at the service container and dummy
+values for `NEXTAUTH_SECRET`/`OLLAMA_*`**, because `lib/config.ts` fails fast
+on any missing or malformed env var at import time — `checks` never actually
+talks to Ollama, but the URL still has to satisfy `z.string().url()` or the
+build itself refuses to start.
+
+**Writing these tests is what found two real bugs, not just what verifies
+their absence.** `NoteBulkBar`'s success message (`"Tagged 2 notes."`) was
+computed but never visible: `run()` called `onDone()` — which clears the
+parent's selection — in the same tick as `setMessage()`, and the component's
+own `if (selected.length === 0) return null` guard sat above the message
+JSX, so the bar unmounted before the message could render. Fixed by keeping
+the bar mounted while a message is pending (`selected.length === 0 &&
+!message`) and by only clearing selection after delete, not after every bulk
+action — tagging or reassigning a course/project leaves the same notes
+selected and visible, so there's no reason to lose the selection just
+because one action on it succeeded. The second "bug" turned out not to be
+one: the `/ai` chat's "Ask" button clears the question input on submit, so
+it staying disabled afterward is `!question.trim()`, not a stuck `busy`
+flag — the test itself was wrong to wait on button-enabled state instead of
+on the thread actually appearing in the sidebar, which is what the feature
+being tested (persistence) actually produces.
+
+**The assistant e2e test never asserts on the model's wording**, only that a
+`Conversation` row exists and survives a reload — matching this project's
+own established stance that phrasing-dependent model behavior (tool-call
+counts, refusal wording) is measured, not asserted as a hard pass/fail. Its
+timeout is doubled under `process.env.CI` (the same flag `playwright.config.ts`
+already reads for `forbidOnly`), since a shared, GPU-less CI runner is slower
+at local inference than this machine.
+
 ## AI evaluation protocol (`tests/ai/evals.ts`)
 
 Maintain benchmarks verifying RAG retrieval precision, citation correctness, and
