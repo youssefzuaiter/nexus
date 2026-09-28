@@ -1,58 +1,50 @@
 import Link from "next/link";
 import { requireUserId } from "@/lib/session";
-import { listProjects } from "@/repositories/project-repository";
-import { listGoalOptions } from "@/repositories/goal-repository";
-import { ProjectForm } from "@/components/project-form";
-import { createProjectAction } from "@/actions/projects";
+import { listGoals } from "@/repositories/goal-repository";
+import { GoalForm } from "@/components/goal-form";
+import { createGoalAction } from "@/actions/goals";
 import { hueForCategory, tintClass } from "@/lib/card-color";
 
-export const metadata = { title: "Projects · Nexus" };
+export const metadata = { title: "Goals · Nexus" };
 
-export default async function ProjectsPage() {
+const DATE = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short" });
+
+export default async function GoalsPage() {
   const userId = await requireUserId();
-  const [projects, goals] = await Promise.all([
-    listProjects(userId),
-    listGoalOptions(userId),
-  ]);
+  const goals = await listGoals(userId);
 
   return (
     <div className="mx-auto max-w-3xl">
       <header className="mb-5">
-        <h1 className="text-2xl font-semibold tracking-tight text-text">
-          Projects
-        </h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-text">Goals</h1>
         <p className="mt-1 text-sm text-text-muted">
-          {projects.length} {projects.length === 1 ? "project" : "projects"}
+          {goals.length} {goals.length === 1 ? "goal" : "goals"}
         </p>
       </header>
 
-      <ProjectForm
-        action={createProjectAction}
-        submitLabel="Create project"
-        goals={goals}
-        resetOnSuccess
-      />
+      <GoalForm action={createGoalAction} submitLabel="Create goal" resetOnSuccess />
 
-      {projects.length === 0 ? (
+      {goals.length === 0 ? (
         <p className="mt-6 rounded-xl border border-dashed border-border-strong px-4 py-10 text-center text-sm text-text-muted">
-          No projects yet. Create one to group notes, tasks and events.
+          No goals yet. Create one, then link projects and tasks to it as you
+          go.
         </p>
       ) : (
         <ul className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
-          {projects.map((project) => (
-            <li key={project.id}>
+          {goals.map((goal) => (
+            <li key={goal.id}>
               <Link
-                href={`/projects/${project.id}`}
+                href={`/goals/${goal.id}`}
                 className={`block rounded-2xl p-4 transition-transform hover:-translate-y-0.5 ${tintClass(
-                  hueForCategory(project.category),
+                  hueForCategory(goal.category),
                 )}`}
               >
                 <div className="flex items-baseline justify-between gap-3">
                   <h2 className="truncate font-medium text-text">
-                    {project.title}
+                    {goal.title}
                   </h2>
                   <span className="shrink-0 rounded-full bg-surface-raised px-2 py-0.5 text-xs text-text-muted">
-                    {project.category}
+                    {goal.category}
                   </span>
                 </div>
 
@@ -60,24 +52,25 @@ export default async function ProjectsPage() {
                   <div
                     className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-raised"
                     role="progressbar"
-                    aria-valuenow={project.progress}
+                    aria-valuenow={goal.progress}
                     aria-valuemin={0}
                     aria-valuemax={100}
-                    aria-label={`${project.title} progress`}
+                    aria-label={`${goal.title} progress`}
                   >
                     <div
                       className="h-full rounded-full bg-accent transition-[width]"
-                      style={{ width: `${project.progress}%` }}
+                      style={{ width: `${goal.progress}%` }}
                     />
                   </div>
                   <span className="shrink-0 text-xs tabular-nums text-text-muted">
-                    {project.progress}%
+                    {goal.progress}%
                   </span>
                 </div>
 
                 <p className="mt-2 text-xs text-text-muted">
-                  {project.counts.notes} notes · {project.counts.openTasks} open
-                  of {project.counts.tasks} tasks · {project.counts.events} events
+                  {goal.counts.projects} projects · {goal.counts.tasks} direct
+                  tasks
+                  {goal.targetDate && ` · targeting ${DATE.format(goal.targetDate)}`}
                 </p>
               </Link>
             </li>

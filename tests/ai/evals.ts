@@ -19,6 +19,8 @@ import * as eventService from "@/services/event-service";
 import * as eventRepository from "@/repositories/event-repository";
 import * as projectService from "@/services/project-service";
 import * as projectRepository from "@/repositories/project-repository";
+import * as goalService from "@/services/goal-service";
+import * as goalRepository from "@/repositories/goal-repository";
 import * as dashboardService from "@/services/dashboard-service";
 import * as linkRepository from "@/repositories/link-repository";
 import { parseWikiLinks } from "@/lib/wiki-links";
@@ -441,6 +443,7 @@ async function main() {
       estimatedMinutes: 120,
       projectId: null,
       courseId: null,
+      goalId: null,
       scheduledStart: null,
       scheduledEnd: null,
     });
@@ -495,6 +498,7 @@ async function main() {
           estimatedMinutes: 5,
           projectId: null,
           courseId: null,
+          goalId: null,
           scheduledStart: null,
           scheduledEnd: null,
         }),
@@ -716,6 +720,7 @@ async function main() {
     const project = await projectService.createProject(owner.id, {
       title: "Graduation thesis",
       category: "University",
+      goalId: null,
     });
     check("new project starts at zero progress", project.progress === 0);
 
@@ -731,6 +736,7 @@ async function main() {
           estimatedMinutes: 60,
           projectId: project.id,
           courseId: null,
+          goalId: null,
           scheduledStart: null,
           scheduledEnd: null,
         }),
@@ -802,6 +808,7 @@ async function main() {
     const intruderProject = await projectService.createProject(intruder.id, {
       title: "Someone else's project",
       category: "Career",
+      goalId: null,
     });
     check(
       "a note cannot be attached to another tenant's project",
@@ -828,6 +835,7 @@ async function main() {
           estimatedMinutes: 5,
           projectId: intruderProject.id,
           courseId: null,
+          goalId: null,
           scheduledStart: null,
           scheduledEnd: null,
         }),
@@ -890,6 +898,230 @@ async function main() {
       await taskService.deleteTask(owner.id, t.id).catch(() => {});
     }
 
+    section("Goals: derived progress across projects and tasks");
+    const goal = await goalService.createGoal(owner.id, {
+      title: "Graduate with a strong AI portfolio",
+      description: null,
+      category: "University",
+      targetDate: null,
+    });
+    check("new goal starts at zero progress", goal.progress === 0);
+
+    // Two tasks linked straight to the goal, no project involved.
+    const directTasks = [];
+    for (const title of ["Ship the RAG assistant", "Write the thesis"]) {
+      directTasks.push(
+        await taskService.createTask(owner.id, {
+          title,
+          description: null,
+          priority: "medium",
+          tags: [],
+          dueDate: null,
+          estimatedMinutes: 60,
+          projectId: null,
+          courseId: null,
+          goalId: goal.id,
+          scheduledStart: null,
+          scheduledEnd: null,
+        }),
+      );
+    }
+    check(
+      "adding direct tasks keeps progress at zero until one is done",
+      (await goalRepository.getGoal(owner.id, goal.id))?.progress === 0,
+    );
+
+    await taskService.setTaskStatus(owner.id, directTasks[0].id, "done");
+    check(
+      "completing one of two direct tasks gives 50%",
+      (await goalRepository.getGoal(owner.id, goal.id))?.progress === 50,
+    );
+
+    // Now link a whole project to the same goal — its tasks must roll up too,
+    // one level up from how the project already rolls up its own tasks.
+    const goalProject = await projectService.createProject(owner.id, {
+      title: "Deepfake detector",
+      category: "Personal",
+      goalId: goal.id,
+    });
+    check(
+      "linking an empty project leaves the goal's tally unchanged",
+      (await goalRepository.getGoal(owner.id, goal.id))?.progress === 50,
+    );
+
+    const projectTasksUnderGoal = [];
+    for (const title of ["Collect dataset", "Train baseline"]) {
+      projectTasksUnderGoal.push(
+        await taskService.createTask(owner.id, {
+          title,
+          description: null,
+          priority: "medium",
+          tags: [],
+          dueDate: null,
+          estimatedMinutes: 60,
+          projectId: goalProject.id,
+          courseId: null,
+          goalId: null,
+          scheduledStart: null,
+          scheduledEnd: null,
+        }),
+      );
+    }
+    // 1 of 2 direct tasks done, plus 0 of 2 project tasks: 1/4 = 25%.
+    check(
+      "a linked project's tasks roll up into the goal too",
+      (await goalRepository.getGoal(owner.id, goal.id))?.progress === 25,
+      `${(await goalRepository.getGoal(owner.id, goal.id))?.progress}%`,
+    );
+
+    await taskService.setTaskStatus(owner.id, projectTasksUnderGoal[0].id, "done");
+    check(
+      "completing a task inside the linked project updates the goal, not just the project",
+      (await goalRepository.getGoal(owner.id, goal.id))?.progress === 50,
+      `${(await goalRepository.getGoal(owner.id, goal.id))?.progress}%`,
+    );
+    check(
+      "the linked project's own progress also updated, independently",
+      (await projectRepository.getProject(owner.id, goalProject.id))?.progress === 50,
+    );
+
+    // Unlinking a direct task recalculates the goal without averaging away
+    // from raw task counts.
+    await taskService.updateTask(owner.id, directTasks[1].id, {
+      title: directTasks[1].title,
+      description: null,
+      priority: "medium",
+      tags: [],
+      dueDate: null,
+      estimatedMinutes: 60,
+      projectId: null,
+      courseId: null,
+      goalId: null,
+      scheduledStart: null,
+      scheduledEnd: null,
+    });
+    check(
+      "unlinking a direct task recalculates the goal without it",
+      (await goalRepository.getGoal(owner.id, goal.id))?.progress === 67,
+      `${(await goalRepository.getGoal(owner.id, goal.id))?.progress}%`,
+    );
+
+    const taskTotals = await goalRepository.getGoalTaskTotals(owner.id, goal.id);
+    check(
+      "getGoalTaskTotals matches the stored percentage's own done/total, direct plus via-project",
+      taskTotals.done === 2 && taskTotals.total === 3,
+      `${taskTotals.done}/${taskTotals.total}`,
+    );
+
+    const goalContents = await goalRepository.getGoalContents(owner.id, goal.id);
+    check(
+      "goal contents list the linked project",
+      goalContents.projects.some((p) => p.id === goalProject.id),
+    );
+    check(
+      "goal contents list only the remaining direct task",
+      goalContents.tasks.length === 1 && goalContents.tasks[0].id === directTasks[0].id,
+    );
+
+    const goalSummaries = await goalRepository.listGoals(owner.id);
+    const goalSummary = goalSummaries.find((g) => g.id === goal.id);
+    check("goal summary counts its linked project", goalSummary?.counts.projects === 1);
+    check(
+      "goal summary counts its own direct tasks, not the project's",
+      goalSummary?.counts.tasks === 1,
+      `${goalSummary?.counts.tasks}`,
+    );
+
+    const goalHits = await searchWorkspaceVectors(
+      owner.id,
+      await embedQuery("how is my AI portfolio coming along"),
+      5,
+      ["goal"],
+    );
+    check(
+      "goals are retrievable by meaning",
+      goalHits.some((h) => h.sourceId === goal.id),
+      `${goalHits.length} goal hits`,
+    );
+
+    // A client-supplied goalId must be rejected if it belongs to someone else.
+    const intruderGoal = await goalService.createGoal(intruder.id, {
+      title: "Someone else's goal",
+      description: null,
+      category: "Career",
+      targetDate: null,
+    });
+    check(
+      "a project cannot be attached to another tenant's goal",
+      await expectAppError("RESOURCE_NOT_FOUND", () =>
+        projectService.createProject(owner.id, {
+          title: "Smuggled",
+          category: "Personal",
+          goalId: intruderGoal.id,
+        }),
+      ),
+    );
+    check(
+      "a task cannot be attached to another tenant's goal",
+      await expectAppError("RESOURCE_NOT_FOUND", () =>
+        taskService.createTask(owner.id, {
+          title: "Smuggled",
+          description: null,
+          priority: "low",
+          tags: [],
+          dueDate: null,
+          estimatedMinutes: 5,
+          projectId: null,
+          courseId: null,
+          goalId: intruderGoal.id,
+          scheduledStart: null,
+          scheduledEnd: null,
+        }),
+      ),
+    );
+    check(
+      "another user cannot read the goal",
+      (await goalRepository.getGoal(intruder.id, goal.id)) === null,
+    );
+    check(
+      "another user cannot delete the goal",
+      await expectAppError("RESOURCE_NOT_FOUND", () =>
+        goalService.deleteGoal(intruder.id, goal.id),
+      ),
+    );
+
+    // Deleting a goal must never take its projects and tasks with it.
+    await goalService.deleteGoal(owner.id, goal.id);
+    check(
+      "deleting a goal keeps its project, detached",
+      await (async () => {
+        const p = await projectRepository.getProject(owner.id, goalProject.id);
+        return p !== null && p.goalId === null;
+      })(),
+    );
+    check(
+      "deleting a goal keeps its direct task, detached",
+      await (async () => {
+        const t = await taskRepository.getTask(owner.id, directTasks[0].id);
+        return t !== null && t.goalId === null;
+      })(),
+    );
+    check(
+      "deleting a goal removes it from the index",
+      (await prisma.workspaceEmbedding.count({
+        where: { userId: owner.id, sourceType: "goal", sourceId: goal.id },
+      })) === 0,
+    );
+    check(
+      "deleted goal is gone from listings",
+      (await goalRepository.listGoals(owner.id)).every((g) => g.id !== goal.id),
+    );
+
+    await projectService.deleteProject(owner.id, goalProject.id).catch(() => {});
+    for (const t of [...directTasks, ...projectTasksUnderGoal]) {
+      await taskService.deleteTask(owner.id, t.id).catch(() => {});
+    }
+
     section("Time blocking");
     const blockUser = await prisma.user.create({
       data: { email: `block-${randomUUID()}@test.local`, passwordHash: "eval" },
@@ -902,6 +1134,7 @@ async function main() {
         dueDate: null,
         projectId: null,
         courseId: null,
+        goalId: null,
       };
 
       const unscheduled = await taskService.createTask(blockUser.id, {
@@ -1195,6 +1428,7 @@ async function main() {
           estimatedMinutes: 30,
           projectId: null,
           courseId: null,
+          goalId: null,
           scheduledStart: new Date(2026, 8, 18, 20, 0),
           scheduledEnd: new Date(2026, 8, 18, 20, 30),
         },
@@ -1225,6 +1459,7 @@ async function main() {
             estimatedMinutes: 30,
             projectId: null,
             courseId: null,
+            goalId: null,
             scheduledStart: null,
             scheduledEnd: null,
           },
@@ -1354,6 +1589,7 @@ async function main() {
       const project = await projectService.createProject(exportUser.id, {
         title: "Export project",
         category: "Personal",
+        goalId: null,
       });
       const note = await noteService.createNote(exportUser.id, {
         title: "Export note",
@@ -1372,6 +1608,7 @@ async function main() {
         estimatedMinutes: 60,
         projectId: null,
         courseId: null,
+        goalId: null,
         scheduledStart: null,
         scheduledEnd: null,
       });
@@ -2122,6 +2359,7 @@ async function main() {
           estimatedMinutes: 30,
           projectId: null,
           courseId: null,
+          goalId: null,
           scheduledStart: null,
           scheduledEnd: null,
         });
@@ -2217,6 +2455,7 @@ async function main() {
       const finished = await projectService.createProject(dashUser.id, {
         title: "Finished project",
         category: "Personal",
+        goalId: null,
       });
       const finishedTask = await taskService.createTask(dashUser.id, {
         title: "The only task",
@@ -2227,6 +2466,7 @@ async function main() {
         estimatedMinutes: 10,
         projectId: finished.id,
         courseId: null,
+        goalId: null,
         scheduledStart: null,
         scheduledEnd: null,
       });
@@ -2234,6 +2474,7 @@ async function main() {
       await projectService.createProject(dashUser.id, {
         title: "Ongoing project",
         category: "University",
+        goalId: null,
       });
 
       const full = await dashboardService.getDashboard(dashUser.id, noon);
