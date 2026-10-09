@@ -176,9 +176,12 @@ export async function restoreProject(
     throw new AppError("RESOURCE_NOT_FOUND", "That project is not in the trash.");
   }
 
-  await syncProjectIndex(userId, project);
-  await recalculateGoalProgress(userId, project.goalId);
-  return project;
+  // Deleting detached the project's tasks but left its stored progress as it
+  // was, so a project deleted at 67% would come back claiming 67% of nothing.
+  // Recomputing also re-syncs its search index and, through the cascade at the
+  // end of recalculateProgress, its goal.
+  await recalculateProgress(userId, projectId);
+  return (await projectRepository.getProject(userId, projectId)) ?? project;
 }
 
 export async function purgeProject(

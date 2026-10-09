@@ -7,15 +7,24 @@ import type { GoalInput } from "@/repositories/goal-repository";
 import { embeddableTextFor, goalRollupSummary } from "@/services/embeddable-text";
 import type { GoalModel as Goal } from "@/generated/prisma/models";
 
+// The rundown inside a goal's embedded text is ordered explicitly, and
+// `reindex-service.ts` uses this same order. Without one, Postgres returns
+// rows in whatever order it likes, and the rebuild path would be free to embed
+// the same goal as different text than the write path did — which is exactly
+// the drift `embeddable-text.ts` exists to prevent.
+export const ROLLUP_ORDER = [{ createdAt: "asc" }, { id: "asc" }] as const;
+
 async function syncGoalIndex(userId: string, goal: Goal): Promise<void> {
   const [projects, tasks] = await Promise.all([
     prisma.project.findMany({
       where: { userId, goalId: goal.id, deletedAt: null },
       select: { title: true, progress: true },
+      orderBy: [...ROLLUP_ORDER],
     }),
     prisma.task.findMany({
       where: { userId, goalId: goal.id, deletedAt: null },
       select: { title: true, status: true },
+      orderBy: [...ROLLUP_ORDER],
     }),
   ]);
 
@@ -139,18 +148,22 @@ export async function deleteGoal(userId: string, goalId: string): Promise<void> 
 /**
  * Undoes `deleteGoal` as far as it can be undone. Deleting detached the
  * goal's projects and tasks by nulling their `goalId`, and that association
- * is not recorded anywhere else — so a restored goal comes back with 0%
- * progress and nothing linked, the same documented limitation
- * `restoreProject` already carries.
+ * is not recorded anywhere else — so a restored goal comes back with nothing
+ * linked.
+ *
+ * Its stored `progress` has to be recomputed to say so. Deleting leaves that
+ * column exactly as it was, so a goal deleted at 100% would otherwise return
+ * showing 100% for work that is no longer attached to it.
  */
 export async function restoreGoal(userId: string, goalId: string): Promise<Goal> {
-  const goal = await goalRepository.restoreGoal(userId, goalId);
-  if (!goal) {
+  const restored = await goalRepository.restoreGoal(userId, goalId);
+  if (!restored) {
     throw new AppError("RESOURCE_NOT_FOUND", "That goal is not in the trash.");
   }
 
-  await syncGoalIndex(userId, goal);
-  return goal;
+  // Also re-syncs the search index, with the corrected figure in its text.
+  await recalculateGoalProgress(userId, goalId);
+  return (await goalRepository.getGoal(userId, goalId)) ?? restored;
 }
 
 export async function purgeGoal(userId: string, goalId: string): Promise<void> {
